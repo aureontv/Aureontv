@@ -26,7 +26,7 @@ document.querySelectorAll(".nav-item").forEach(button=>button.addEventListener("
 // La app móvil nativa expone este puente tras implementar NSD/mDNS y los adaptadores de cada fabricante.
 const tvPlugin=()=>window.Capacitor?.Plugins?.ControlHubTV||window.ControlHubTV||null;
 const discoverButton=$("#discover-devices"), discoveryStatus=$("#discovery-status"), discoveryResults=$("#discovery-results");
-function showDiscoveryMessage(message){discoveryStatus.textContent=message;discoveryResults.hidden=false;discoveryResults.innerHTML='<p class="discovery-empty">'+escapeHTML(message)+'</p>'}
+function showDiscoveryMessage(message){discoveryStatus.textContent="Búsqueda no disponible";discoveryResults.hidden=false;discoveryResults.innerHTML='<p class="discovery-empty">'+escapeHTML(message)+'</p>'}
 discoverButton.addEventListener("click",async()=>{
  const plugin=tvPlugin();
  discoveryResults.hidden=false;discoveryResults.innerHTML="";
