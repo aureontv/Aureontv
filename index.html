@@ -9,11 +9,11 @@
 <div class="ha-connect-heading"><div><span class="eyebrow">INTEGRACIÓN MULTIMARCA</span><h2>Conectar Home Assistant</h2>
 <p>Home Assistant puede descubrir y controlar televisores de distintas marcas en tu red local. Control Hub mostrará únicamente los equipos que Home Assistant encuentre y autorice.</p></div><span id="ha-connection-status" class="ha-state">Sin conectar</span></div>
 <form id="ha-connection-form" class="ha-connection-form">
-<label>Dirección local de Home Assistant<input name="url" type="url" required placeholder="http://homeassistant.local:8123" autocomplete="url"></label>
+<label>Dirección local de Home Assistant<input name="url" type="url" required placeholder="https://homeassistant.example.com:8123" autocomplete="url"></label>
 <label>Token de acceso de Home Assistant<input name="token" type="password" required autocomplete="off" placeholder="Pega el token aquí"></label>
 <div class="ha-form-actions"><button class="primary" type="submit" id="ha-connect-button">Conectar y buscar televisores</button><button class="secondary" type="button" id="ha-disconnect-button" disabled>Desconectar</button></div>
 </form>
-<p class="ha-security-note">Seguridad: el token se usa solo en la memoria de esta pestaña y no se guarda en localStorage ni se envía a Control Hub. No lo compartas por chat. Usa una dirección local y una conexión de confianza.</p>
+<p class="ha-security-note">Seguridad: el token se usa solo en la memoria de esta pestaña; no se guarda en localStorage ni se envía a un servidor de Control Hub. Como esta página usa HTTPS, Home Assistant también debe ofrecer HTTPS/WSS. No pegues el token en el chat y revócalo si crees que alguien lo vio.</p>
 <div id="ha-device-results" class="ha-device-results" aria-live="polite"></div>
 <p class="ha-help-links">Guías oficiales: <a href="https://www.home-assistant.io/integrations/webostv/" target="_blank" rel="noopener noreferrer">LG webOS</a> · <a href="https://www.home-assistant.io/integrations/samsungtv/" target="_blank" rel="noopener noreferrer">Samsung Smart TV</a> · <a href="https://www.home-assistant.io/integrations/" target="_blank" rel="noopener noreferrer">otras integraciones</a>.</p>
 </section>
