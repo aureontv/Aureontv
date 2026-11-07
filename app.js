@@ -147,7 +147,8 @@ class HomeAssistantClient {
    if(!s.entity_id?.startsWith("media_player."))return false;
    const a=s.attributes||{}, reg=entityMap.get(s.entity_id), dev=reg?.device_id?deviceMap.get(reg.device_id):null;
    const hay=[s.entity_id,a.friendly_name,a.device_class,dev?.manufacturer,dev?.model,dev?.name].filter(Boolean).join(" ");
-   const lowerHay=hay.toLowerCase();\n   return a.device_class==="tv"||Array.isArray(a.source_list)||["tv","televisor","television","webos","samsung","sonic","android tv","google tv"].some(term=>lowerHay.includes(term));
+   const lowerHay=hay.toLowerCase();
+   return a.device_class==="tv"||Array.isArray(a.source_list)||["tv","televisor","television","webos","samsung","sonic","android tv","google tv"].some(term=>lowerHay.includes(term));
   });
   return candidates.map(s=>{
    const a=s.attributes||{}, reg=entityMap.get(s.entity_id), dev=reg?.device_id?deviceMap.get(reg.device_id):null;
