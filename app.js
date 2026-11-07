@@ -103,6 +103,7 @@ class HomeAssistantClient {
  async connect() {
   const parsed = new URL(this.baseUrl);
   if (!["http:","https:"].includes(parsed.protocol)) throw new Error("Usa una dirección HTTP o HTTPS válida.");
+  if (window.location.protocol==="https:"&&parsed.protocol!=="https:") throw new Error("Control Hub está abierto con HTTPS. El navegador bloquea una conexión WebSocket local sin cifrar; configura Home Assistant con HTTPS o usa la futura app móvil nativa para la conexión local.");
   const wsUrl = (parsed.protocol === "https:" ? "wss://" : "ws://") + parsed.host + (parsed.pathname.endsWith("/") ? parsed.pathname.slice(0,-1) : parsed.pathname) + "/api/websocket";
   this.socket = new WebSocket(wsUrl);
   await new Promise((resolve,reject)=>{
@@ -216,17 +217,20 @@ async function sendHomeAssistantCommand(command){
  if(!device){$("#remote-status").textContent="El televisor ya no aparece disponible en Home Assistant.";return;}
  const entityId=device.entityId, remoteId=device.remoteEntityId, state=device.state, attrs=device.attributes||{};
  const service=async(domain,name,data={})=>haClient.call({type:"call_service",domain,service:name,service_data:{entity_id:entityId,...data}});
+ const manufacturer=(device.manufacturer||"").toLowerCase();
+ const lgKeyMap={up:"UP",down:"DOWN",left:"LEFT",right:"RIGHT",select:"ENTER",home:"HOME",back:"BACK",menu:"MENU"};
  const keyMap={up:"DPAD_UP",down:"DPAD_DOWN",left:"DPAD_LEFT",right:"DPAD_RIGHT",select:"DPAD_CENTER",home:"HOME",back:"BACK",menu:"MENU"};
  $("#remote-status").textContent="Enviando orden a Home Assistant…";
  try{
+  if(state==="unavailable"||state==="unknown")throw new Error("Home Assistant informa que el televisor no está disponible.");
   if(command==="power"){await service("media_player",state==="off"?"turn_on":"turn_off");}
   else if(command==="mute"){if(typeof attrs.is_volume_muted!=="boolean")throw new Error("Home Assistant no informa el estado de silencio para este televisor.");await service("media_player","volume_mute",{is_volume_muted:!attrs.is_volume_muted});}
   else if(command==="volume_up")await service("media_player","volume_up");
   else if(command==="volume_down")await service("media_player","volume_down");
   else if(command==="play_pause")await service("media_player","media_play_pause");
   else if(keyMap[command]){
-   if(!remoteId)throw new Error("Esta integración no expone un control de navegación compatible para este televisor.");
-   await haClient.call({type:"call_service",domain:"remote",service:"send_command",service_data:{entity_id:remoteId,command:keyMap[command]}});
+   if(manufacturer.includes("lg")){await haClient.call({type:"call_service",domain:"webostv",service:"button",service_data:{entity_id:entityId,button:lgKeyMap[command]}});}
+   else {if(!remoteId)throw new Error("Esta integración no expone un control de navegación compatible para este televisor.");await haClient.call({type:"call_service",domain:"remote",service:"send_command",service_data:{entity_id:remoteId,command:keyMap[command]}});}
   }else throw new Error("Orden no compatible.");
   $("#remote-status").textContent="Home Assistant aceptó la orden. El televisor puede tardar un momento en responder.";
  }catch(error){$("#remote-status").textContent=error?.message||"No se pudo enviar la orden."; }
