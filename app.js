@@ -6,16 +6,18 @@ const $=s=>document.querySelector(s);
 let devices=load(STORAGE_KEY,[]);
 let pairedTv=load(PAIRED_KEY,null);
 let discovered=[];
+let haClient=null;
+let haTvDevices=[];
 function load(key,fallback){try{return JSON.parse(localStorage.getItem(key)||"null")??fallback}catch{return fallback}}
 function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify(devices));render()}
 function escapeHTML(value){return String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function render(){
  $("#total-count").textContent=devices.length+ (pairedTv?1:0);
- $("#online-count").textContent="—";
+ $("#online-count").textContent=haClient?String(haTvDevices.filter(d=>d.state!=="unavailable"&&d.state!=="unknown").length):"—";
  $("#room-count").textContent=new Set(devices.map(d=>d.room).filter(Boolean)).size;
  $("#empty-state").hidden=devices.length>0||!!pairedTv;
  $("#device-grid").innerHTML=devices.map(d=>'<article class="device-card"><div class="device-icon">'+(icons[d.type]||"◇")+'</div><h3>'+escapeHTML(d.name)+'</h3><p>'+(labels[d.type]||"Dispositivo")+' · '+escapeHTML(d.model||"Modelo por configurar")+(d.room?" · "+escapeHTML(d.room):"")+'</p><span class="pending">Pendiente de conexión</span></article>').join("");
- if(pairedTv){$("#tv-remote").hidden=false;$("#remote-device-name").textContent=pairedTv.name||"Televisor";$("#remote-device-model").textContent=[pairedTv.manufacturer,pairedTv.model].filter(Boolean).join(" · ");}else{$("#tv-remote").hidden=true;}
+ if(pairedTv){$("#tv-remote").hidden=false;$("#remote-device-name").textContent=pairedTv.name||"Televisor";$("#remote-device-model").textContent=[pairedTv.manufacturer,pairedTv.model].filter(Boolean).join(" · ");if(pairedTv.source==="home_assistant"&&!haClient)$("#remote-status").textContent="Vuelve a conectar Home Assistant para enviar órdenes a este televisor."; }else{$("#tv-remote").hidden=true;}
 }
 const dialog=$("#device-dialog");function openDialog(){dialog.showModal()}
 $("#add-device").addEventListener("click",openDialog);$("#empty-add").addEventListener("click",openDialog);
@@ -80,7 +82,151 @@ async function sendTvCommand(command){
 document.querySelectorAll("[data-tv-command]").forEach(button=>button.addEventListener("click",()=>sendTvCommand(button.dataset.tvCommand)));
 $("#disconnect-tv").addEventListener("click",async()=>{
  const plugin=tvPlugin();
- try{if(plugin?.unpair&&pairedTv)await plugin.unpair({connectionId:pairedTv.connectionId});}catch{}
+ try{if(plugin?.unpair&&pairedTv?.source!=="home_assistant"&&pairedTv)await plugin.unpair({connectionId:pairedTv.connectionId});}catch{}
  pairedTv=null;localStorage.removeItem(PAIRED_KEY);render();discoveryStatus.textContent="Televisor desvinculado.";
 });
 render();
+
+
+// --- Conexión real con Home Assistant mediante su API WebSocket local ---
+// El token permanece únicamente en memoria; no se escribe en localStorage.
+class HomeAssistantClient {
+ constructor(baseUrl, token) {
+  this.baseUrl = baseUrl.replace(/\\/$/, "");
+  this.token = token;
+  this.socket = null;
+  this.nextId = 1;
+  this.pending = new Map();
+  this.states = [];
+  this.onStateChanged = null;
+ }
+ async connect() {
+  const parsed = new URL(this.baseUrl);
+  if (!["http:","https:"].includes(parsed.protocol)) throw new Error("Usa una dirección HTTP o HTTPS válida.");
+  const wsUrl = (parsed.protocol === "https:" ? "wss://" : "ws://") + parsed.host + parsed.pathname.replace(/\\/$/,"") + "/api/websocket";
+  this.socket = new WebSocket(wsUrl);
+  await new Promise((resolve,reject)=>{
+   let settled=false;
+   const timer=setTimeout(()=>{if(!settled){settled=true;reject(new Error("Home Assistant no respondió. Comprueba la dirección y la red Wi‑Fi."));}},12000);
+   this.socket.onopen=()=>{};
+   this.socket.onerror=()=>{if(!settled){settled=true;clearTimeout(timer);reject(new Error("No se pudo abrir la conexión local con Home Assistant."));}};
+   this.socket.onclose=()=>{for(const [,p] of this.pending)p.reject(new Error("La conexión con Home Assistant se cerró."));this.pending.clear();};
+   this.socket.onmessage=(event)=>{
+    let message;try{message=JSON.parse(event.data)}catch{return}
+    if(message.type==="auth_required"){this.socket.send(JSON.stringify({type:"auth",access_token:this.token}));return;}
+    if(message.type==="auth_invalid"){if(!settled){settled=true;clearTimeout(timer);reject(new Error("Home Assistant rechazó el token. Revisa que esté vigente."));}return;}
+    if(message.type==="auth_ok"){if(!settled){settled=true;clearTimeout(timer);resolve();}return;}
+    if(message.type==="event"&&message.event?.event_type==="state_changed"){
+     const changed=message.event.data?.new_state;
+     if(changed){const index=this.states.findIndex(s=>s.entity_id===changed.entity_id);if(index>=0)this.states[index]=changed;else this.states.push(changed);this.onStateChanged?.(changed);}
+     return;
+    }
+    if(message.id&&this.pending.has(message.id)){const p=this.pending.get(message.id);this.pending.delete(message.id);if(message.success===false)p.reject(new Error(message.error?.message||"Home Assistant rechazó la solicitud."));else p.resolve(message);}
+   };
+  });
+  return this;
+ }
+ call(payload) {
+  if(!this.socket||this.socket.readyState!==WebSocket.OPEN) return Promise.reject(new Error("No hay conexión activa con Home Assistant."));
+  const id=this.nextId++;
+  return new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error("La solicitud tardó demasiado."));},12000);
+   this.pending.set(id,{resolve:value=>{clearTimeout(timer);resolve(value);},reject:error=>{clearTimeout(timer);reject(error);}});
+   this.socket.send(JSON.stringify({id,...payload}));
+  });
+ }
+ async loadDevices() {
+  const response=await this.call({type:"get_states"});
+  this.states=response.result||[];
+  let entities=[],devices=[];
+  try{entities=(await this.call({type:"config/entity_registry/list"})).result||[];}catch{}
+  try{devices=(await this.call({type:"config/device_registry/list"})).result||[];}catch{}
+  const entityMap=new Map(entities.map(e=>[e.entity_id,e]));
+  const deviceMap=new Map(devices.map(d=>[d.id,d]));
+  const candidates=this.states.filter(s=>{
+   if(!s.entity_id?.startsWith("media_player."))return false;
+   const a=s.attributes||{}, reg=entityMap.get(s.entity_id), dev=reg?.device_id?deviceMap.get(reg.device_id):null;
+   const hay=[s.entity_id,a.friendly_name,a.device_class,dev?.manufacturer,dev?.model,dev?.name].filter(Boolean).join(" ");
+   return a.device_class==="tv"||Array.isArray(a.source_list)||/\\b(tv|televisor|television|webos|samsung|sonic|android tv|google tv)\\b/i.test(hay);
+  });
+  return candidates.map(s=>{
+   const a=s.attributes||{}, reg=entityMap.get(s.entity_id), dev=reg?.device_id?deviceMap.get(reg.device_id):null;
+   const remote=entities.find(e=>e.device_id&&e.device_id===reg?.device_id&&e.entity_id?.startsWith("remote."));
+   return {entityId:s.entity_id,deviceId:reg?.device_id||null,remoteEntityId:remote?.entity_id||null,name:a.friendly_name||dev?.name||s.entity_id,manufacturer:dev?.manufacturer||"",model:dev?.model||"",state:s.state||"unknown",attributes:a};
+  });
+ }
+ async subscribe() { await this.call({type:"subscribe_events",event_type:"state_changed"}); }
+ close(){try{this.socket?.close()}catch{}this.socket=null;this.token="";this.pending.clear();}
+}
+const haForm=$("#ha-connection-form"), haStatus=$("#ha-connection-status"), haResults=$("#ha-device-results"), haConnectButton=$("#ha-connect-button");
+function showHaStatus(message,connected=false){haStatus.textContent=message;haStatus.classList.toggle("connected",connected);}
+function renderHaDevices(){
+ haResults.innerHTML="";
+ if(!haTvDevices.length){haResults.textContent=haClient?"Home Assistant está conectado, pero no devolvió entidades que podamos identificar como televisores. Añade la integración de tu TV en Home Assistant y vuelve a buscar.":"";render();return;}
+ haTvDevices.forEach(device=>{
+  const card=document.createElement("article");card.className="ha-device";
+  const info=document.createElement("div");
+  const title=document.createElement("strong");title.textContent=device.name;
+  const detail=document.createElement("span");detail.textContent=[device.manufacturer,device.model,device.entityId].filter(Boolean).join(" · ");
+  const state=document.createElement("small");state.textContent="Estado informado por Home Assistant: "+device.state;
+  const pick=document.createElement("button");pick.type="button";pick.className="primary";pick.textContent=pairedTv?.entityId===device.entityId?"Seleccionado":"Usar control remoto";
+  pick.addEventListener("click",()=>{
+   pairedTv={source:"home_assistant",entityId:device.entityId,remoteEntityId:device.remoteEntityId,name:device.name,manufacturer:device.manufacturer,model:device.model};
+   localStorage.setItem(PAIRED_KEY,JSON.stringify(pairedTv));render();
+   $("#remote-status").textContent="Televisor seleccionado mediante Home Assistant. Envía una orden para comprobar las funciones disponibles.";
+   $("#tv-remote").scrollIntoView({behavior:"smooth",block:"center"});
+   renderHaDevices();
+  });
+  info.append(title,detail,state);card.append(info,pick);haResults.append(card);
+ });
+ render();
+}
+haForm.addEventListener("submit",async event=>{
+ event.preventDefault();
+ const form=new FormData(haForm), url=String(form.get("url")||"").trim(), token=String(form.get("token")||"").trim();
+ if(!url||!token)return;
+ haConnectButton.disabled=true;showHaStatus("Conectando…");haResults.textContent="Buscando los televisores detectados por Home Assistant…";
+ const nextClient=new HomeAssistantClient(url,token);
+ try{
+  await nextClient.connect();
+  haClient?.close();haClient=nextClient;
+  haClient.onStateChanged=(changed)=>{
+   const device=haTvDevices.find(d=>d.entityId===changed.entity_id);
+   if(device){device.state=changed.state;device.attributes=changed.attributes||{};renderHaDevices();}
+  };
+  haTvDevices=await haClient.loadDevices();
+  await haClient.subscribe().catch(()=>{});
+  showHaStatus("Conectado",true);
+  $("#ha-disconnect-button").disabled=false;
+  form.get("token");
+  haForm.elements.token.value="";
+  renderHaDevices();
+ }catch(error){nextClient.close();showHaStatus("No conectado");haResults.textContent=error?.message||"No se pudo conectar con Home Assistant.";}
+ finally{haConnectButton.disabled=false;}
+});
+$("#ha-disconnect-button").addEventListener("click",()=>{
+ haClient?.close();haClient=null;haTvDevices=[];
+ if(pairedTv?.source==="home_assistant"){$("#remote-status").textContent="Home Assistant está desconectado. Conéctalo de nuevo para usar el control remoto.";}
+ showHaStatus("Desconectado");$("#ha-disconnect-button").disabled=true;haResults.textContent="";render();
+});
+async function sendHomeAssistantCommand(command){
+ if(!haClient){$("#remote-status").textContent="Conecta Home Assistant de nuevo para enviar órdenes.";return;}
+ const device=haTvDevices.find(d=>d.entityId===pairedTv.entityId);
+ if(!device){$("#remote-status").textContent="El televisor ya no aparece disponible en Home Assistant.";return;}
+ const entityId=device.entityId, remoteId=device.remoteEntityId, state=device.state, attrs=device.attributes||{};
+ const service=async(domain,name,data={})=>haClient.call({type:"call_service",domain,service:name,service_data:{entity_id:entityId,...data}});
+ const keyMap={up:"DPAD_UP",down:"DPAD_DOWN",left:"DPAD_LEFT",right:"DPAD_RIGHT",select:"DPAD_CENTER",home:"HOME",back:"BACK",menu:"MENU"};
+ $("#remote-status").textContent="Enviando orden a Home Assistant…";
+ try{
+  if(command==="power"){await service("media_player",state==="off"?"turn_on":"turn_off");}
+  else if(command==="mute"){if(typeof attrs.is_volume_muted!=="boolean")throw new Error("Home Assistant no informa el estado de silencio para este televisor.");await service("media_player","volume_mute",{is_volume_muted:!attrs.is_volume_muted});}
+  else if(command==="volume_up")await service("media_player","volume_up");
+  else if(command==="volume_down")await service("media_player","volume_down");
+  else if(command==="play_pause")await service("media_player","media_play_pause");
+  else if(keyMap[command]){
+   if(!remoteId)throw new Error("Esta integración no expone un control de navegación compatible para este televisor.");
+   await haClient.call({type:"call_service",domain:"remote",service:"send_command",service_data:{entity_id:remoteId,command:keyMap[command]}});
+  }else throw new Error("Orden no compatible.");
+  $("#remote-status").textContent="Home Assistant aceptó la orden. El televisor puede tardar un momento en responder.";
+ }catch(error){$("#remote-status").textContent=error?.message||"No se pudo enviar la orden."; }
+}
