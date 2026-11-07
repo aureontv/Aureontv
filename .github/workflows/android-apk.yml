@@ -1,0 +1,76 @@
+name: Build Control Hub Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "index.html"
+      - "app.js"
+      - "styles.css"
+      - "native/**"
+      - "package.json"
+      - "capacitor.config.json"
+      - "scripts/**"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install dependencies
+        run: npm install
+      - name: Prepare web assets
+        run: npm run build:web
+      - name: Generate Android project
+        run: npx cap add android
+      - name: Register Control Hub TV discovery plugin
+        shell: bash
+        run: |
+          mkdir -p android/app/src/main/java/com/controlhub/tv
+          cp native/android/ControlHubTVPlugin.kt android/app/src/main/java/com/controlhub/tv/ControlHubTVPlugin.kt
+          MAIN=android/app/src/main/java/com/aureontv/controlhub/MainActivity.kt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/java/com/aureontv/controlhub/MainActivity.kt")
+          s = p.read_text()
+          if "import com.controlhub.tv.ControlHubTVPlugin" not in s:
+              s = s.replace("import com.getcapacitor.BridgeActivity", "import com.getcapacitor.BridgeActivity\\nimport com.controlhub.tv.ControlHubTVPlugin")
+          if "registerPlugin(ControlHubTVPlugin::class.java)" not in s:
+              s = s.replace("super.onCreate(savedInstanceState)", "registerPlugin(ControlHubTVPlugin::class.java)\\n        super.onCreate(savedInstanceState)")
+          p.write_text(s)
+          PY
+      - name: Add local network permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          marker = '<application'
+          permissions = '    <uses-permission android:name="android.permission.INTERNET" />\\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\\n'
+          if "android.permission.ACCESS_NETWORK_STATE" not in s:
+              s = s.replace(marker, permissions + marker, 1)
+          p.write_text(s)
+          PY
+      - name: Build debug APK
+        run: |
+          npx cap sync android
+          cd android
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: control-hub-android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
