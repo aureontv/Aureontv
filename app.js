@@ -92,7 +92,7 @@ render();
 // El token permanece únicamente en memoria; no se escribe en localStorage.
 class HomeAssistantClient {
  constructor(baseUrl, token) {
-  this.baseUrl = baseUrl.replace(/\\/$/, "");
+  this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0,-1) : baseUrl;
   this.token = token;
   this.socket = null;
   this.nextId = 1;
@@ -103,7 +103,7 @@ class HomeAssistantClient {
  async connect() {
   const parsed = new URL(this.baseUrl);
   if (!["http:","https:"].includes(parsed.protocol)) throw new Error("Usa una dirección HTTP o HTTPS válida.");
-  const wsUrl = (parsed.protocol === "https:" ? "wss://" : "ws://") + parsed.host + parsed.pathname.replace(/\\/$/,"") + "/api/websocket";
+  const wsUrl = (parsed.protocol === "https:" ? "wss://" : "ws://") + parsed.host + (parsed.pathname.endsWith("/") ? parsed.pathname.slice(0,-1) : parsed.pathname) + "/api/websocket";
   this.socket = new WebSocket(wsUrl);
   await new Promise((resolve,reject)=>{
    let settled=false;
@@ -147,7 +147,7 @@ class HomeAssistantClient {
    if(!s.entity_id?.startsWith("media_player."))return false;
    const a=s.attributes||{}, reg=entityMap.get(s.entity_id), dev=reg?.device_id?deviceMap.get(reg.device_id):null;
    const hay=[s.entity_id,a.friendly_name,a.device_class,dev?.manufacturer,dev?.model,dev?.name].filter(Boolean).join(" ");
-   return a.device_class==="tv"||Array.isArray(a.source_list)||/\\b(tv|televisor|television|webos|samsung|sonic|android tv|google tv)\\b/i.test(hay);
+   const lowerHay=hay.toLowerCase();\n   return a.device_class==="tv"||Array.isArray(a.source_list)||["tv","televisor","television","webos","samsung","sonic","android tv","google tv"].some(term=>lowerHay.includes(term));
   });
   return candidates.map(s=>{
    const a=s.attributes||{}, reg=entityMap.get(s.entity_id), dev=reg?.device_id?deviceMap.get(reg.device_id):null;
