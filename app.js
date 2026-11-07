@@ -17,4 +17,40 @@ $("#add-device").addEventListener("click",openDialog);$("#empty-add").addEventLi
 $("#close-dialog").addEventListener("click",()=>dialog.close());$("#cancel-dialog").addEventListener("click",()=>dialog.close());
 $("#device-form").addEventListener("submit",event=>{event.preventDefault();const data=new FormData(event.currentTarget);devices.unshift({id:crypto.randomUUID(),name:data.get("name").trim(),type:data.get("type"),model:data.get("model").trim(),room:data.get("room").trim(),createdAt:new Date().toISOString()});save();event.currentTarget.reset();dialog.close()});
 document.querySelectorAll(".nav-item").forEach(button=>button.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(item=>item.classList.remove("active"));button.classList.add("active");const views={devices:"Mis dispositivos",rooms:"Habitaciones",activity:"Actividad"};$("#page-title").textContent=views[button.dataset.view]||"Mis dispositivos";if(button.dataset.view!=="devices")alert("Esta sección se habilitará en una próxima etapa.")}));
+
+// Búsqueda limitada a Bluetooth: el navegador no permite escanear toda la red Wi-Fi local.
+const discoverButton=$("#discover-devices");
+const discoveryStatus=$("#discovery-status");
+const discoveryResults=$("#discovery-results");
+if(discoverButton){
+ discoverButton.addEventListener("click",async()=>{
+  discoveryResults.hidden=false;
+  discoveryResults.innerHTML="";
+  if(!window.isSecureContext){
+   discoveryStatus.textContent="Abre Control Hub mediante HTTPS para comprobar Bluetooth.";
+   return;
+  }
+  if(!navigator.bluetooth || typeof navigator.bluetooth.requestDevice!=="function"){
+   discoveryStatus.textContent="Este navegador no ofrece búsqueda Bluetooth web. Prueba Chrome en un dispositivo compatible.";
+   discoveryResults.innerHTML='<p class="discovery-empty">No se inició ninguna búsqueda. La detección de televisores por Wi-Fi requiere un puente local o una app nativa.</p>';
+   return;
+  }
+  discoveryStatus.textContent="Elige un dispositivo Bluetooth cercano en la ventana del navegador…";
+  try{
+   const device=await navigator.bluetooth.requestDevice({acceptAllDevices:true});
+   const name=device.name||"Dispositivo Bluetooth sin nombre";
+   discoveryStatus.textContent="Dispositivo Bluetooth detectado. Aún no está conectado ni controlable.";
+   const card=document.createElement("article");
+   card.className="discovered-device";
+   const title=document.createElement("strong");title.textContent=name;
+   const detail=document.createElement("span");detail.textContent="Detectado mediante el selector Bluetooth del navegador · sin conexión establecida";
+   card.append(title,detail);
+   discoveryResults.append(card);
+  }catch(error){
+   if(error && error.name==="NotFoundError") discoveryStatus.textContent="No seleccionaste ningún dispositivo.";
+   else if(error && error.name==="SecurityError") discoveryStatus.textContent="El navegador bloqueó el acceso Bluetooth. Revisa permisos y HTTPS.";
+   else discoveryStatus.textContent="No se pudo completar la búsqueda Bluetooth en este navegador.";
+  }
+ });
+}
 render();
