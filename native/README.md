@@ -38,3 +38,19 @@ Cada adaptador debe declarar capacidades verificadas. No enviar comandos no sopo
 - No guardar tokens de fabricante en localStorage.
 - No informar estado online ni éxito de comandos sin respuesta real del TV.
 - La vinculación debe poder revocarse.
+
+
+## Ruta de compatibilidad amplia mediante Home Assistant
+
+La página web ahora puede conectarse directamente a la API WebSocket local de Home Assistant. El token se conserva solo en memoria de la pestaña y no se escribe en localStorage. La interfaz consulta estados y registros de entidades/dispositivos para mostrar televisores que Home Assistant ya haya descubierto e integrado.
+
+- LG: la integración oficial webOS documenta compatibilidad con webOS 2.0 o posterior y requiere habilitar LG Connect Apps.
+- Samsung: la integración oficial documenta Smart TVs Tizen de 2016 en adelante, además de modelos con sus APIs compatibles.
+- Otras marcas: dependen de que Home Assistant tenga una integración para ese modelo o plataforma. No se puede prometer compatibilidad literal con todos los televisores; modelos antiguos, cerrados o sin API de red pueden requerir un hub IR compatible u otro método autorizado.
+
+Los controles de volumen, encendido y reproducción usan servicios estándar de Home Assistant. Navegación (direcciones, inicio, atrás y menú) solo se envía si la integración expone una entidad `remote.*` vinculada al mismo dispositivo. Una solicitud exitosa significa que Home Assistant aceptó el servicio, no necesariamente que el televisor ejecutó físicamente cada acción.
+
+Documentación de integraciones:
+- https://www.home-assistant.io/integrations/webostv/
+- https://www.home-assistant.io/integrations/samsungtv/
+- https://www.home-assistant.io/integrations/
