@@ -40,7 +40,6 @@ jobs:
         run: |
           mkdir -p android/app/src/main/java/com/controlhub/tv
           cp native/android/ControlHubTVPlugin.kt android/app/src/main/java/com/controlhub/tv/ControlHubTVPlugin.kt
-          MAIN=android/app/src/main/java/com/aureontv/controlhub/MainActivity.kt
           python3 - <<'PY'
           from pathlib import Path
           p = Path("android/app/src/main/java/com/aureontv/controlhub/MainActivity.kt")
