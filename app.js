@@ -33,7 +33,7 @@ discoverButton.addEventListener("click",async()=>{
  const plugin=tvPlugin();
  discoveryResults.hidden=false;discoveryResults.innerHTML="";
  if(!plugin||typeof plugin.discover!=="function"){
-  showDiscoveryMessage("La búsqueda Wi‑Fi todavía no está disponible en esta versión web. Para detectar televisores reales hace falta instalar la app móvil nativa de Control Hub y conceder permiso de red local.");
+  showDiscoveryMessage("Esta versión web no puede buscar televisores en la red. La detección real necesita la aplicación móvil de Control Hub.");
   return;
  }
  discoverButton.disabled=true;discoveryStatus.textContent="Buscando dispositivos compatibles en tu red Wi‑Fi…";
