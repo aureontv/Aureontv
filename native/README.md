@@ -54,3 +54,8 @@ Documentación de integraciones:
 - https://www.home-assistant.io/integrations/webostv/
 - https://www.home-assistant.io/integrations/samsungtv/
 - https://www.home-assistant.io/integrations/
+
+
+### Requisito de transporte para la web alojada
+
+Como Control Hub se sirve mediante HTTPS, los navegadores bloquean la conexión WebSocket sin cifrar (`ws://`) hacia un Home Assistant local que solo ofrezca HTTP. Esta integración web exige una dirección de Home Assistant con HTTPS/WSS. Para una conexión local HTTP sin configurar TLS hará falta el puente nativo Android/iOS, que todavía no está implementado ni publicado.
