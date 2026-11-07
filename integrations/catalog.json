@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "description": "Compatibility discovery catalog. Entries describe integration targets, not guaranteed support for every model.",
+  "protocols": [
+    {
+      "id": "matter",
+      "name": "Matter",
+      "transport": "ip",
+      "status": "planned",
+      "notes": "Requires Matter controller and compatible device."
+    },
+    {
+      "id": "lan-http",
+      "name": "Local network APIs",
+      "transport": "lan",
+      "status": "planned",
+      "notes": "Only documented/authenticated APIs supported by the device."
+    },
+    {
+      "id": "websocket",
+      "name": "WebSocket integrations",
+      "transport": "lan-or-cloud",
+      "status": "planned",
+      "notes": "Requires a vendor or hub endpoint and credentials stored server-side."
+    },
+    {
+      "id": "ir-rf-hub",
+      "name": "IR/RF bridge",
+      "transport": "local-bridge",
+      "status": "planned",
+      "notes": "Requires compatible hardware; not every IR/RF code is available."
+    },
+    {
+      "id": "zigbee",
+      "name": "Zigbee",
+      "transport": "local-bridge",
+      "status": "planned",
+      "notes": "Requires a compatible coordinator and device profile."
+    },
+    {
+      "id": "zwave",
+      "name": "Z-Wave",
+      "transport": "local-bridge",
+      "status": "planned",
+      "notes": "Requires a compatible controller and regional frequency support."
+    },
+    {
+      "id": "vendor-cloud",
+      "name": "Manufacturer cloud API",
+      "transport": "cloud",
+      "status": "planned",
+      "notes": "Requires official API access, supported model and user authorization."
+    }
+  ],
+  "categories": [
+    {
+      "id": "tv",
+      "name": "Televisores",
+      "brands": [
+        "LG",
+        "Samsung",
+        "Sony",
+        "Hisense",
+        "TCL",
+        "Philips",
+        "Panasonic",
+        "Vizio",
+        "Sharp",
+        "Xiaomi"
+      ]
+    },
+    {
+      "id": "ac",
+      "name": "Climatización",
+      "brands": [
+        "Daikin",
+        "LG",
+        "Samsung",
+        "Midea",
+        "Mitsubishi Electric",
+        "Panasonic",
+        "Gree",
+        "Carrier",
+        "Haier"
+      ]
+    },
+    {
+      "id": "lighting",
+      "name": "Iluminación",
+      "brands": [
+        "Philips Hue",
+        "IKEA",
+        "TP-Link",
+        "Nanoleaf",
+        "LIFX",
+        "Aqara"
+      ]
+    },
+    {
+      "id": "audio",
+      "name": "Audio",
+      "brands": [
+        "Sony",
+        "JBL",
+        "Bose",
+        "Sonos",
+        "Samsung",
+        "Denon",
+        "Yamaha"
+      ]
+    },
+    {
+      "id": "computers",
+      "name": "Computadoras",
+      "brands": [
+        "Windows",
+        "macOS",
+        "Linux"
+      ]
+    },
+    {
+      "id": "home",
+      "name": "Domótica",
+      "brands": [
+        "Matter",
+        "Zigbee",
+        "Z-Wave",
+        "Home Assistant",
+        "Hubitat"
+      ]
+    }
+  ],
+  "supportStates": [
+    "planned",
+    "experimental",
+    "available",
+    "unsupported"
+  ],
+  "safety": "Never mark a device available until its exact model, transport, authorization and command capabilities have been verified."
+}
