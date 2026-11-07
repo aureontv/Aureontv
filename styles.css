@@ -13,3 +13,29 @@
 .discovered-device strong{font-size:13px}
 .discovered-device span,.discovery-empty{font-size:11px;color:var(--muted);line-height:1.5}
 @media(max-width:650px){.discovery-card{padding:17px}.discovery-actions{align-items:flex-start;flex-direction:column}}
+
+/* Panel de control remoto para televisores vinculados */
+.tv-remote{margin:22px 0;padding:22px;background:linear-gradient(145deg,#182d3e,#101c2d);border:1px solid #35516a;border-radius:18px}
+.tv-remote[hidden]{display:none}
+.remote-heading{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:18px}
+.remote-heading h2{font:800 20px Manrope;margin:5px 0}
+.remote-heading p{color:var(--muted);font-size:12px;margin:0}
+.remote-layout{display:grid;grid-template-columns:minmax(240px,360px) 1fr;gap:22px;align-items:center}
+.remote-screen{max-width:360px;width:100%;margin:auto;padding:20px;background:#0b1421;border:1px solid #30445a;border-radius:28px;box-shadow:0 16px 45px #0005}
+.remote-screen>span{display:block;text-align:center;color:var(--muted);font-size:9px;letter-spacing:2px;margin-bottom:15px}
+.remote-power-row,.remote-bottom,.volume-row{display:flex;justify-content:space-around;align-items:center;gap:10px}
+.remote-screen button{border:1px solid #344a60;background:#1c3045;color:#eaf3ff;border-radius:14px;min-width:42px;min-height:42px;font:600 13px 'DM Sans';cursor:pointer}
+.remote-screen button:hover{border-color:var(--accent);color:var(--accent)}
+.remote-screen button:disabled{opacity:.45;cursor:wait}
+.remote-power-row{margin-bottom:18px}
+.remote-power-row button:first-child{color:#ff9e9e}
+.dpad{display:grid;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(3,52px);justify-content:center;gap:5px;margin:12px 0 18px}
+.dpad button{border-radius:13px}
+.dpad .up{grid-column:2;grid-row:1}.dpad .left{grid-column:1;grid-row:2}.dpad .select{grid-column:2;grid-row:2;background:#31564f;color:#9ff0d7;border-radius:50%}.dpad .right{grid-column:3;grid-row:2}.dpad .down{grid-column:2;grid-row:3}
+.remote-bottom button{font-size:10px;padding:0 8px}
+.volume-row{margin-top:17px;padding-top:15px;border-top:1px solid #293d52}
+.volume-row span{font-size:9px;letter-spacing:1px;color:var(--muted)}
+#remote-status{font-size:12px;line-height:1.6;color:var(--muted)}
+.discovered-device{gap:9px;margin:8px 0}
+.discovered-device button{align-self:flex-start;padding:9px 13px}
+@media(max-width:650px){.remote-layout{grid-template-columns:1fr}.remote-heading{align-items:flex-start}.tv-remote{padding:17px}.remote-screen{max-width:320px}}
