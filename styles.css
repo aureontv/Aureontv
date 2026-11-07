@@ -59,3 +59,15 @@
 .ha-device strong{font-size:13px}.ha-device span,.ha-device small{font-size:10px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
 .ha-device button{flex:0 0 auto}
 @media(max-width:650px){.ha-connect-card{padding:17px}.ha-connect-heading{display:block}.ha-state{display:inline-block;margin-top:5px}.ha-connection-form{grid-template-columns:1fr}.ha-form-actions{grid-column:auto}.ha-device{align-items:flex-start;flex-direction:column}.ha-device button{width:100%}}
+
+/* Interfaz simplificada: prioriza búsqueda y mando remoto */
+.sidebar,.welcome,.stats,.section-head,.device-grid,.empty,.ha-connect-card,.integration-card,.notice{display:none!important}
+.app-shell{display:block;min-height:100vh}
+.main{max-width:760px;padding:28px 20px 48px}
+.topbar{margin-bottom:18px}
+.top-actions{display:none}
+.discovery-card{margin:0 0 18px;padding:22px}
+.discovery-copy p{max-width:620px}
+.discovery-note{display:none}
+.tv-remote{margin-top:18px}
+@media(max-width:650px){.main{padding:18px 14px 32px}.discovery-card{padding:18px}.topbar h1{font-size:24px}}
