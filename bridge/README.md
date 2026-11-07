@@ -23,3 +23,29 @@ The bridge initiates an outbound authenticated connection to the cloud. The clou
 
 ## Important
 A bridge cannot make an unsupported appliance controllable. Infrared/RF control additionally needs compatible transmitter hardware and the correct device codes. Safety-critical appliances must not be operated automatically without manufacturer-supported safeguards.
+
+
+## Home Assistant rollout status
+
+Home Assistant is the primary integration path for Control Hub. The current web interface only presents setup guidance; it does not yet pair with a Home Assistant instance or execute hardware commands.
+
+### Prerequisites
+- A Home Assistant instance on an always-on device in the home network.
+- Supported devices added and working in Home Assistant first.
+- A dedicated bridge process, deployed separately from the static web frontend, to maintain an outbound authenticated connection to Control Hub.
+
+### Security requirements before enabling pairing
+- Never request or store a Home Assistant long-lived access token in browser localStorage or frontend code.
+- Store credentials only in the bridge's OS secret store.
+- Pair only explicitly selected entities; do not expose unrestricted Home Assistant service calls.
+- Require authenticated account ownership, short-lived one-time pairing, revocation, rate limiting and audit records.
+- Keep the bridge connection outbound-only; do not ask users to open router ports.
+
+### Current implementation status
+- [x] Home Assistant adapter scaffold with entity allowlisting and limited service names.
+- [x] User-facing setup and prerequisite guidance.
+- [ ] Bridge runtime, secure pairing and heartbeat transport.
+- [ ] End-to-end command delivery and result reporting.
+- [ ] Verification against real hardware.
+
+Do not mark devices online or commands completed until a real bridge heartbeat and device response have been verified.
