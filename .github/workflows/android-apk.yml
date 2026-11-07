@@ -45,9 +45,9 @@ jobs:
           p = Path("android/app/src/main/java/com/aureontv/controlhub/MainActivity.kt")
           s = p.read_text()
           if "import com.controlhub.tv.ControlHubTVPlugin" not in s:
-              s = s.replace("import com.getcapacitor.BridgeActivity", "import com.getcapacitor.BridgeActivity\\nimport com.controlhub.tv.ControlHubTVPlugin")
+              s = s.replace("import com.getcapacitor.BridgeActivity", "import com.getcapacitor.BridgeActivity" + chr(10) + "import com.controlhub.tv.ControlHubTVPlugin")
           if "registerPlugin(ControlHubTVPlugin::class.java)" not in s:
-              s = s.replace("super.onCreate(savedInstanceState)", "registerPlugin(ControlHubTVPlugin::class.java)\\n        super.onCreate(savedInstanceState)")
+              s = s.replace("super.onCreate(savedInstanceState)", "registerPlugin(ControlHubTVPlugin::class.java)" + chr(10) + "        super.onCreate(savedInstanceState)")
           p.write_text(s)
           PY
       - name: Add local network permissions
@@ -57,7 +57,7 @@ jobs:
           p = Path("android/app/src/main/AndroidManifest.xml")
           s = p.read_text()
           marker = '<application'
-          permissions = '    <uses-permission android:name="android.permission.INTERNET" />\\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\\n'
+          permissions = '    <uses-permission android:name="android.permission.INTERNET" />' + chr(10) + '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />' + chr(10)
           if "android.permission.ACCESS_NETWORK_STATE" not in s:
               s = s.replace(marker, permissions + marker, 1)
           p.write_text(s)
