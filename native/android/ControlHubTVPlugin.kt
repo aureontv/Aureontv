@@ -152,6 +152,13 @@ class ControlHubTVPlugin : Plugin() {
                     )
                     .put("type", "register")
                 ws.send(manifest.toString())
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!finished) {
+                        finished = true
+                        ws.cancel()
+                        call.reject("No llegó la confirmación de LG en 45 segundos. Acepta el aviso en la pantalla del televisor y vuelve a intentar.")
+                    }
+                }, 45000L)
             }
             override fun onMessage(ws: WebSocket, text: String) {
                 try {
@@ -191,6 +198,15 @@ class ControlHubTVPlugin : Plugin() {
             .build()
         val listener = object : WebSocketListener() {
             private var finished = false
+            override fun onOpen(ws: WebSocket, response: Response) {
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!finished) {
+                        finished = true
+                        ws.cancel()
+                        call.reject("No llegó la autorización de Samsung en 45 segundos. Acepta la solicitud en la pantalla del TV y vuelve a intentar.")
+                    }
+                }, 45000L)
+            }
             override fun onMessage(ws: WebSocket, text: String) {
                 try {
                     val msg = JSONObject(text)
