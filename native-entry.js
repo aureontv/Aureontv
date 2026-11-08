@@ -7,4 +7,4 @@ if (window.__AUREON_NATIVE__) {
 }
 
 // Load the same application logic used by the hosted web version.
-await import("./app.js");
+void import("./app.js");
