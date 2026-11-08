@@ -1,7 +1,7 @@
 # Control Hub TV native integration
 
 ## Estado real
-La interfaz web ya está preparada para consumir un plugin nativo llamado `ControlHubTV`, pero el plugin Android/iOS todavía no está implementado. Por eso la web no muestra dispositivos ficticios ni permite afirmar que un televisor esté vinculado.
+El plugin Android `ControlHubTV` ya contiene una primera implementación de descubrimiento DNS-SD y adaptadores LAN iniciales para LG webOS (WebSocket 3000) y Samsung (WebSocket heredado 8001). La implementación iOS no existe todavía. Los límites por modelo y protocolo están documentados en `native/android/README.md`.
 
 ## Contrato que espera la interfaz
 
@@ -28,7 +28,7 @@ Documentación: https://developer.apple.com/documentation/technotes/tn3179-under
 Implementar y probar por separado, empezando por:
 1. Google TV / Android TV: descubrimiento y emparejamiento oficial del dispositivo; no asumir que todos los fabricantes exponen el mismo protocolo.
 2. LG webOS: protocolo local compatible y autorización en la pantalla del televisor.
-3. Samsung Tizen / SmartThings: API oficial y OAuth/autorización del usuario; no asumir acceso LAN universal.
+3. Samsung Tizen: la primera versión intenta el canal LAN heredado en el puerto 8001; modelos que exigen WSS/8002 todavía no están cubiertos.
 
 Cada adaptador debe declarar capacidades verificadas. No enviar comandos no soportados por el modelo.
 
@@ -59,3 +59,8 @@ Documentación de integraciones:
 ### Requisito de transporte para la web alojada
 
 Como Control Hub se sirve mediante HTTPS, los navegadores bloquean la conexión WebSocket sin cifrar (`ws://`) hacia un Home Assistant local que solo ofrezca HTTP. Esta integración web exige una dirección de Home Assistant con HTTPS/WSS. Para una conexión local HTTP sin configurar TLS hará falta el puente nativo Android/iOS, que todavía no está implementado ni publicado.
+
+
+## Estado de la primera versión Android
+
+La compilación automática añade OkHttp, registra el plugin nativo y genera un APK debug. La búsqueda y vinculación todavía deben validarse con televisores físicos. No se promete compatibilidad universal: LG seguro/3001, Samsung WSS/8002, Google TV, iOS y la plataforma exacta de Sonic siguen pendientes. La web alojada por sí sola no puede ejecutar este plugin; se necesita instalar la app Android compilada.
