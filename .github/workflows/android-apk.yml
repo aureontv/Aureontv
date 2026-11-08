@@ -65,39 +65,26 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           root = Path("android/build.gradle")
-          root_kts = Path("android/build.gradle.kts")
-          app = Path("android/app/build.gradle")
-          app_kts = Path("android/app/build.gradle.kts")
-          if root.exists():
-              p = root
-              root_line = "plugins { id 'org.jetbrains.kotlin.android' version '2.0.21' apply false }\n"
-          elif root_kts.exists():
-              p = root_kts
-              root_line = 'plugins { id("org.jetbrains.kotlin.android") version "2.0.21" apply false }\n'
-          else:
-              raise SystemExit("No se encontró el Gradle raíz de Android")
-          root_text = p.read_text()
-          if "org.jetbrains.kotlin.android" not in root_text:
-              root_plugin = "id 'org.jetbrains.kotlin.android' version '2.0.21' apply false"
-              if "plugins {" in root_text:
-                  root_text = root_text.replace("plugins {", "plugins { " + root_plugin, 1)
-                  p.write_text(root_text)
+          if not root.exists():
+              raise SystemExit("No se encontró android/build.gradle")
+          root_text = root.read_text()
+          dependency = 'classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21"'
+          if "kotlin-gradle-plugin" not in root_text:
+              if "buildscript {" in root_text:
+                  start = root_text.index("buildscript {")
+                  dep = root_text.index("dependencies {", start)
+                  end = root_text.index("}", dep)
+                  root_text = root_text[:end] + "    " + dependency + chr(10) + root_text[end:]
               else:
-                  p.write_text(root_line + root_text)
-          if app.exists():
-              q = app
-              app_plugin = "    id 'org.jetbrains.kotlin.android'\n"
-          elif app_kts.exists():
-              q = app_kts
-              app_plugin = '    id("org.jetbrains.kotlin.android")\n'
-          else:
-              raise SystemExit("No se encontró el Gradle del módulo Android")
-          app_text = q.read_text()
+                  block = 'buildscript { repositories { google(); mavenCentral() }; dependencies { ' + dependency + ' } }' + chr(10)
+                  root_text = block + root_text
+              root.write_text(root_text)
+          app = Path("android/app/build.gradle")
+          if not app.exists():
+              raise SystemExit("No se encontró android/app/build.gradle")
+          app_text = app.read_text()
           if "org.jetbrains.kotlin.android" not in app_text:
-              if "plugins {" not in app_text:
-                  raise SystemExit("El módulo Android no tiene bloque plugins")
-              app_text = app_text.replace("plugins {", "plugins {\n" + app_plugin, 1)
-              q.write_text(app_text)
+              app.write_text(app_text + chr(10) + "apply plugin: 'org.jetbrains.kotlin.android'" + chr(10))
           PY
       - name: Register Control Hub TV discovery plugin
         shell: bash
