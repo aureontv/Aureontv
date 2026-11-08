@@ -1,3 +1,5 @@
+import { Capacitor, registerPlugin } from '@capacitor/core';
+const NativeControlHubTV = registerPlugin('ControlHubTV');
 const STORAGE_KEY="controlhub.devices.v1";
 const PAIRED_KEY="controlhub.paired-tv.v1";
 const icons={tv:"▣",ac:"❄",light:"☼",speaker:"♫",computer:"▤",other:"◇"};
@@ -26,7 +28,7 @@ $("#device-form").addEventListener("submit",event=>{event.preventDefault();const
 document.querySelectorAll(".nav-item").forEach(button=>button.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(item=>item.classList.remove("active"));button.classList.add("active");const views={devices:"Mis dispositivos",rooms:"Habitaciones",activity:"Actividad"};$("#page-title").textContent=views[button.dataset.view]||"Mis dispositivos";if(button.dataset.view!=="devices")alert("Esta sección se habilitará en una próxima etapa.")}));
 
 // La app móvil nativa expone este puente tras implementar NSD/mDNS y los adaptadores de cada fabricante.
-const tvPlugin=()=>window.Capacitor?.Plugins?.ControlHubTV||window.ControlHubTV||null;
+const tvPlugin=()=>Capacitor.isNativePlatform()?NativeControlHubTV:null;
 const discoverButton=$("#discover-devices"), discoveryStatus=$("#discovery-status"), discoveryResults=$("#discovery-results");
 function showDiscoveryMessage(message){discoveryStatus.textContent="Búsqueda no disponible";discoveryResults.hidden=false;discoveryResults.innerHTML='<p class="discovery-empty">'+escapeHTML(message)+'</p>'}
 discoverButton.addEventListener("click",async()=>{
