@@ -59,6 +59,41 @@ jobs:
               s = s[:end] + "    " + dependency + chr(10) + s[end:]
               p.write_text(s)
           PY
+      - name: Enable Kotlin for the native TV plugin
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("android/build.gradle")
+          root_kts = Path("android/build.gradle.kts")
+          app = Path("android/app/build.gradle")
+          app_kts = Path("android/app/build.gradle.kts")
+          if root.exists():
+              p = root
+              root_line = "plugins { id 'org.jetbrains.kotlin.android' version '2.0.21' apply false }\n"
+          elif root_kts.exists():
+              p = root_kts
+              root_line = 'plugins { id("org.jetbrains.kotlin.android") version "2.0.21" apply false }\n'
+          else:
+              raise SystemExit("No se encontró el Gradle raíz de Android")
+          root_text = p.read_text()
+          if "org.jetbrains.kotlin.android" not in root_text:
+              p.write_text(root_line + root_text)
+          if app.exists():
+              q = app
+              app_plugin = "    id 'org.jetbrains.kotlin.android'\n"
+          elif app_kts.exists():
+              q = app_kts
+              app_plugin = '    id("org.jetbrains.kotlin.android")\n'
+          else:
+              raise SystemExit("No se encontró el Gradle del módulo Android")
+          app_text = q.read_text()
+          if "org.jetbrains.kotlin.android" not in app_text:
+              if "plugins {" not in app_text:
+                  raise SystemExit("El módulo Android no tiene bloque plugins")
+              app_text = app_text.replace("plugins {", "plugins {\n" + app_plugin, 1)
+              q.write_text(app_text)
+          PY
       - name: Register Control Hub TV discovery plugin
         shell: bash
         run: |
@@ -87,7 +122,7 @@ jobs:
           p = Path("android/app/src/main/AndroidManifest.xml")
           s = p.read_text()
           marker = '<application'
-          permissions = '    <uses-permission android:name="android.permission.INTERNET" />' + chr(10) + '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />' + chr(10)
+          permissions = '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />' + chr(10)
           if "android.permission.ACCESS_NETWORK_STATE" not in s:
               s = s.replace(marker, permissions + marker, 1)
           p.write_text(s)
