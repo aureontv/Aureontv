@@ -34,6 +34,30 @@ jobs:
         run: npm run build:web
       - name: Generate Android project
         run: npx cap add android
+      - name: Add secure WebSocket transport dependency
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/build.gradle")
+          if not p.exists():
+              p = Path("android/app/build.gradle.kts")
+          if not p.exists():
+              raise SystemExit("No se encontró el archivo Gradle del módulo Android")
+          s = p.read_text()
+          dependency = 'implementation "com.squareup.okhttp3:okhttp:4.12.0"'
+          if p.suffix == ".kts":
+              dependency = 'implementation("com.squareup.okhttp3:okhttp:4.12.0")'
+          if "com.squareup.okhttp3:okhttp" not in s:
+              pos = s.rfind("dependencies {")
+              if pos < 0:
+                  raise SystemExit("No se encontró el bloque dependencies de Gradle")
+              end = s.find("}", pos)
+              if end < 0:
+                  raise SystemExit("Bloque dependencies incompleto")
+              s = s[:end] + "    " + dependency + chr(10) + s[end:]
+              p.write_text(s)
+          PY
       - name: Register Control Hub TV discovery plugin
         shell: bash
         run: |
