@@ -62,7 +62,8 @@ class ControlHubTVPlugin : Plugin() {
         val platform: String,
         val host: String,
         val socket: WebSocket,
-        @Volatile var registered: Boolean = false
+        @Volatile var registered: Boolean = false,
+        val pointerSocket: WebSocket? = null
     )
 
     private val discovered = ConcurrentHashMap<String, Candidate>()
@@ -358,14 +359,19 @@ class ControlHubTVPlugin : Plugin() {
         val connectionId = UUID.randomUUID().toString()
         val allFinished = AtomicBoolean(false)
 
+        fun rejectOnce(message: String, socket: WebSocket? = null) {
+            if (allFinished.compareAndSet(false, true)) {
+                try { socket?.cancel() } catch (_: Exception) {}
+                call.reject(message)
+            }
+        }
+
         fun attempt(index: Int) {
             if (allFinished.get()) return
             if (index >= ports.size) {
-                if (allFinished.compareAndSet(false, true)) {
-                    call.reject(
-                        "No se pudo vincular el LG. Enciende el televisor, comprueba que el teléfono esté en el mismo Wi-Fi y acepta la solicitud de AUREON TV en la pantalla. Algunos modelos solo admiten el protocolo seguro de su versión webOS."
-                    )
-                }
+                rejectOnce(
+                    "No se pudo vincular el LG. Enciende el televisor, comprueba que ambos equipos estén en el mismo Wi-Fi y acepta la solicitud de AUREON TV en la pantalla."
+                )
                 return
             }
 
@@ -373,7 +379,7 @@ class ControlHubTVPlugin : Plugin() {
             val secure = port == 3001
             val client = try {
                 if (secure) pinnedLgClient(candidate.address) else baseClient
-            } catch (error: Exception) {
+            } catch (_: Exception) {
                 handler.post { attempt(index + 1) }
                 return
             }
@@ -382,10 +388,20 @@ class ControlHubTVPlugin : Plugin() {
             val scheme = if (secure) "wss" else "ws"
             val request = Request.Builder().url("$scheme://$host:$port").build()
             val attemptFinished = AtomicBoolean(false)
+            val registrationReceived = AtomicBoolean(false)
+            var mainSocket: WebSocket? = null
 
             fun failAndContinue() {
+                if (registrationReceived.get()) return
                 if (!attemptFinished.compareAndSet(false, true) || allFinished.get()) return
                 handler.postDelayed({ attempt(index + 1) }, 250L)
+            }
+
+            fun failAfterRegistration(message: String) {
+                if (allFinished.compareAndSet(false, true)) {
+                    try { mainSocket?.cancel() } catch (_: Exception) {}
+                    call.reject(message)
+                }
             }
 
             val listener = object : WebSocketListener() {
@@ -395,7 +411,7 @@ class ControlHubTVPlugin : Plugin() {
                             val certificate = response.handshake?.peerCertificates?.firstOrNull() as? X509Certificate
                                 ?: throw CertificateException("El televisor no presentó un certificado TLS.")
                             saveLgCertificatePin(candidate.address, certificate)
-                        } catch (error: Exception) {
+                        } catch (_: Exception) {
                             socket.cancel()
                             failAndContinue()
                             return
@@ -409,7 +425,7 @@ class ControlHubTVPlugin : Plugin() {
                             "manifest",
                             JSONObject()
                                 .put("manifestVersion", 1)
-                                .put("appVersion", "1.1")
+                                .put("appVersion", "1.2")
                                 .put(
                                     "permissions",
                                     JSONArray(
@@ -430,9 +446,7 @@ class ControlHubTVPlugin : Plugin() {
                         )
 
                     val savedKey = preferences.getString(lgClientKeyName(candidate.address), null)
-                    if (!savedKey.isNullOrBlank()) {
-                        payload.put("client-key", savedKey)
-                    }
+                    if (!savedKey.isNullOrBlank()) payload.put("client-key", savedKey)
 
                     val register = JSONObject()
                         .put("type", "register")
@@ -440,17 +454,16 @@ class ControlHubTVPlugin : Plugin() {
                         .put("payload", payload)
 
                     if (!socket.send(register.toString())) {
-                        socket.cancel()
                         failAndContinue()
                         return
                     }
 
                     handler.postDelayed({
-                        if (attemptFinished.compareAndSet(false, true) &&
-                            allFinished.compareAndSet(false, true)
-                        ) {
-                            socket.cancel()
-                            call.reject("El televisor LG no confirmó el emparejamiento. Revisa la pantalla del TV y vuelve a intentar; AUREON no cambia a un canal menos seguro después de una solicitud de autorización.")
+                        if (!registrationReceived.get()) {
+                            rejectOnce(
+                                "El televisor LG no respondió a la solicitud de emparejamiento. Comprueba que esté encendido y vuelve a intentarlo.",
+                                socket
+                            )
                         }
                     }, 45000L)
                 }
@@ -458,36 +471,116 @@ class ControlHubTVPlugin : Plugin() {
                 override fun onMessage(socket: WebSocket, text: String) {
                     try {
                         val message = JSONObject(text)
-                        when (message.optString("type")) {
-                            "registered" -> {
-                                if (attemptFinished.compareAndSet(false, true) &&
-                                    allFinished.compareAndSet(false, true)
-                                ) {
-                                    val key = message.optJSONObject("payload")?.optString("client-key")
-                                    if (!key.isNullOrBlank() && key != "null") {
-                                        preferences.edit()
-                                            .putString(lgClientKeyName(candidate.address), key)
-                                            .apply()
-                                    }
-                                    sessions[connectionId] = Session("lg", candidate.address, socket, true)
-                                    val result = JSObject()
-                                    result.put("paired", true)
-                                    result.put("connectionId", connectionId)
-                                    result.put("capabilities", capabilities())
-                                    result.put("address", candidate.address)
-                                    result.put("port", port)
-                                    result.put("secure", secure)
-                                    call.resolve(result)
+                        when {
+                            message.optString("type") == "registered" -> {
+                                if (!registrationReceived.compareAndSet(false, true) || allFinished.get()) return
+
+                                val key = message.optJSONObject("payload")?.optString("client-key")
+                                if (!key.isNullOrBlank() && key != "null") {
+                                    preferences.edit()
+                                        .putString(lgClientKeyName(candidate.address), key)
+                                        .apply()
+                                }
+
+                                // webOS sends navigation input through a separate pointer socket.
+                                // A successful SSAP registration alone does not mean the D-pad is ready.
+                                val pointerRequest = JSONObject()
+                                    .put("type", "request")
+                                    .put("id", "aureon-pointer-socket")
+                                    .put("uri", "ssap://com.webos.service.networkinput/getPointerInputSocket")
+                                    .put("payload", JSONObject())
+
+                                if (!socket.send(pointerRequest.toString())) {
+                                    failAfterRegistration("El LG se vinculó, pero no se pudo solicitar el canal de navegación. Vuelve a intentarlo.")
                                 }
                             }
 
-                            "error" -> {
-                                if (attemptFinished.compareAndSet(false, true) &&
-                                    allFinished.compareAndSet(false, true)
+                            message.optString("id") == "aureon-pointer-socket" -> {
+                                if (allFinished.get()) return
+                                val pointerPayload = message.optJSONObject("payload")
+                                val pointerPath = pointerPayload?.optString("socketPath").orEmpty()
+                                if (message.optString("type") == "error" ||
+                                    pointerPayload?.optBoolean("returnValue", true) == false ||
+                                    pointerPath.isBlank() || pointerPath == "null"
                                 ) {
-                                    socket.cancel()
-                                    call.reject("El televisor LG rechazó la solicitud de emparejamiento. No se intentará una conexión menos segura; vuelve a buscar el TV y acepta la solicitud en su pantalla.")
+                                    failAfterRegistration(
+                                        "El televisor aceptó el vínculo, pero no concedió el canal de navegación. Revisa el permiso de control remoto en el LG y vuelve a vincularlo."
+                                    )
+                                    return
                                 }
+
+                                val pointerUrl = try { URL(pointerPath) } catch (_: Exception) {
+                                    failAfterRegistration("El televisor devolvió una dirección de navegación no válida.")
+                                    return
+                                }
+                                val pointerHost = pointerUrl.host.trim('[', ']')
+                                val expectedHost = candidate.address.trim('[', ']')
+                                if (!pointerHost.equals(expectedHost, ignoreCase = true) ||
+                                    !isLocalAddress(pointerHost) ||
+                                    pointerUrl.protocol !in listOf("ws", "wss") ||
+                                    pointerUrl.port !in listOf(3000, 3001)
+                                ) {
+                                    failAfterRegistration("AUREON TV bloqueó una dirección de navegación que no pertenece al televisor vinculado.")
+                                    return
+                                }
+
+                                val pointerSecure = pointerUrl.protocol == "wss"
+                                val pointerClient = try {
+                                    if (pointerSecure) pinnedLgClient(candidate.address) else baseClient
+                                } catch (_: Exception) {
+                                    failAfterRegistration("No se pudo preparar la conexión segura de navegación.")
+                                    return
+                                }
+
+                                val pointerRequest = Request.Builder().url(pointerUrl).build()
+                                pointerClient.newWebSocket(pointerRequest, object : WebSocketListener() {
+                                    override fun onOpen(pointerSocket: WebSocket, pointerResponse: Response) {
+                                        if (pointerSecure) {
+                                            try {
+                                                val certificate = pointerResponse.handshake?.peerCertificates?.firstOrNull() as? X509Certificate
+                                                    ?: throw CertificateException("El televisor no presentó un certificado TLS para navegación.")
+                                                saveLgCertificatePin(candidate.address, certificate)
+                                            } catch (_: Exception) {
+                                                pointerSocket.cancel()
+                                                failAfterRegistration("No se pudo verificar la conexión segura de navegación del LG.")
+                                                return
+                                            }
+                                        }
+
+                                        if (allFinished.compareAndSet(false, true)) {
+                                            sessions[connectionId] = Session(
+                                                "lg",
+                                                candidate.address,
+                                                socket,
+                                                true,
+                                                pointerSocket
+                                            )
+                                            val result = JSObject()
+                                            result.put("paired", true)
+                                            result.put("connectionId", connectionId)
+                                            result.put("capabilities", capabilities())
+                                            result.put("address", candidate.address)
+                                            result.put("port", port)
+                                            result.put("secure", secure)
+                                            result.put("navigationReady", true)
+                                            call.resolve(result)
+                                        } else {
+                                            pointerSocket.close(1000, "AUREON TV pairing finished")
+                                        }
+                                    }
+
+                                    override fun onFailure(pointerSocket: WebSocket, error: Throwable, response: Response?) {
+                                        failAfterRegistration(
+                                            "El LG se vinculó, pero no se pudo abrir su canal de navegación. Comprueba la red local y vuelve a vincularlo."
+                                        )
+                                    }
+                                })
+                            }
+
+                            message.optString("type") == "error" -> {
+                                failAfterRegistration(
+                                    "El televisor LG rechazó la solicitud. Acepta el acceso de AUREON TV en la pantalla del televisor."
+                                )
                             }
                         }
                     } catch (_: Exception) {
@@ -496,21 +589,20 @@ class ControlHubTVPlugin : Plugin() {
                 }
 
                 override fun onFailure(socket: WebSocket, error: Throwable, response: Response?) {
-                    if (secure && isCertificatePinMismatch(error)) {
-                        if (attemptFinished.compareAndSet(false, true) &&
-                            allFinished.compareAndSet(false, true)
-                        ) {
-                            call.reject("El certificado de seguridad del televisor LG cambió. Por protección, AUREON TV detuvo la conexión. Desvincula el televisor y vuelve a autorizarlo si reconoces el cambio.")
-                        }
+                    if (registrationReceived.get()) {
+                        failAfterRegistration("Se interrumpió la conexión con el televisor LG durante el emparejamiento.")
+                    } else if (secure && isCertificatePinMismatch(error)) {
+                        rejectOnce(
+                            "El certificado de seguridad del televisor LG cambió. Por protección, AUREON TV detuvo la conexión. Desvincula el televisor y vuelve a autorizarlo si reconoces el cambio.",
+                            socket
+                        )
                     } else {
-                        // A closed/refused secure port may indicate older firmware;
-                        // only then try the explicitly supported legacy endpoint.
                         failAndContinue()
                     }
                 }
             }
 
-            client.newWebSocket(request, listener)
+            mainSocket = client.newWebSocket(request, listener)
         }
 
         attempt(0)
@@ -656,14 +748,20 @@ class ControlHubTVPlugin : Plugin() {
             return
         }
 
-        val payload = if (session.platform == "lg") {
-            JSONObject()
-                .put("type", "request")
-                .put("id", "aureon-${UUID.randomUUID()}")
-                .put("uri", "ssap://com.webos.service.networkinput/sendKey")
-                .put("payload", JSONObject().put("key", key))
+        if (session.platform == "lg") {
+            val pointer = session.pointerSocket
+            if (pointer == null) {
+                call.reject("El canal de navegación del LG no está disponible. Vuelve a vincular el televisor.")
+                return
+            }
+            // LG webOS pointer input uses a line-based message on its dedicated socket.
+            val pointerMessage = "type:button\nname:$key\n\n"
+            if (!pointer.send(pointerMessage)) {
+                call.reject("La conexión de navegación con el LG se cerró. Vuelve a vincular el televisor.")
+                return
+            }
         } else {
-            JSONObject()
+            val payload = JSONObject()
                 .put("method", "ms.remote.control")
                 .put(
                     "params",
@@ -673,11 +771,10 @@ class ControlHubTVPlugin : Plugin() {
                         .put("Option", "false")
                         .put("TypeOfRemote", "SendRemoteKey")
                 )
-        }
-
-        if (!session.socket.send(payload.toString())) {
-            call.reject("La conexión con el televisor se cerró. Vuelve a vincularlo.")
-            return
+            if (!session.socket.send(payload.toString())) {
+                call.reject("La conexión con el televisor se cerró. Vuelve a vincularlo.")
+                return
+            }
         }
 
         val result = JSObject()
@@ -690,6 +787,7 @@ class ControlHubTVPlugin : Plugin() {
         val id = call.getString("connectionId")
         id?.let {
             val session = sessions.remove(it)
+            session?.pointerSocket?.close(1000, "AUREON TV desvinculado")
             session?.socket?.close(1000, "AUREON TV desvinculado")
             if (session?.platform == "lg") {
                 preferences.edit()
@@ -703,6 +801,7 @@ class ControlHubTVPlugin : Plugin() {
 
     override fun handleOnDestroy() {
         sessions.values.forEach { session ->
+            try { session.pointerSocket?.close(1000, "AUREON TV cerrado") } catch (_: Exception) {}
             try { session.socket.close(1000, "AUREON TV cerrado") } catch (_: Exception) {}
         }
         sessions.clear()
