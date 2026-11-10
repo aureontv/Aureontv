@@ -28,12 +28,24 @@ document.querySelectorAll(".nav-item").forEach(button=>button.addEventListener("
 // La app móvil nativa expone este puente tras implementar NSD/mDNS y los adaptadores de cada fabricante.
 const tvPlugin=()=>window.__AUREON_NATIVE__?window.ControlHubTV:null;
 const discoverButton=$("#discover-devices"), discoveryStatus=$("#discovery-status"), discoveryResults=$("#discovery-results");
-function showDiscoveryMessage(message){discoveryStatus.textContent="Búsqueda no disponible";discoveryResults.hidden=false;discoveryResults.innerHTML='<p class="discovery-empty">'+escapeHTML(message)+'</p>'}
+function showDiscoveryMessage(message){
+ discoveryStatus.textContent="Búsqueda no disponible";
+ discoveryResults.hidden=false;
+ discoveryResults.innerHTML='<p class="discovery-empty">'+escapeHTML(message)+'</p>';
+ if(!tvPlugin()){
+  const link=document.createElement("a");
+  link.href="https://github.com/aureontv/Aureontv/actions/workflows/android-apk.yml";
+  link.target="_blank";link.rel="noopener noreferrer";
+  link.textContent="Ver la compilación Android de AUREON TV";
+  link.className="docs-link";
+  discoveryResults.append(link);
+ }
+}
 discoverButton.addEventListener("click",async()=>{
  const plugin=tvPlugin();
  discoveryResults.hidden=false;discoveryResults.innerHTML="";
  if(!plugin||typeof plugin.discover!=="function"){
-  showDiscoveryMessage("Esta versión web no puede buscar televisores en la red. La detección real necesita la aplicación móvil de Control Hub.");
+  showDiscoveryMessage("La PWA instalada desde Chrome no puede ejecutar el módulo nativo de red. Para buscar televisores, abre AUREON TV en su versión Android integrada, compilada desde este mismo proyecto y con la misma interfaz.");
   return;
  }
  discoverButton.disabled=true;discoveryStatus.textContent="Buscando dispositivos compatibles en tu red Wi‑Fi…";
@@ -61,7 +73,7 @@ async function pairTv(device,button){
  try{
   const result=await plugin.pair({deviceId:device.id});
   if(!result?.paired||!result.connectionId)throw new Error("El televisor no confirmó la vinculación. Acepta la solicitud o introduce el código que aparece en la pantalla del TV.");
-  pairedTv={id:device.id,connectionId:result.connectionId,name:device.name||device.model||"Televisor",manufacturer:device.manufacturer||"",model:device.model||"",capabilities:Array.isArray(result.capabilities)?result.capabilities:[]};
+  pairedTv={source:"native",id:device.id,address:device.address||result.address||"",platform:device.platform||"",port:result.port||device.port||0,connectionId:result.connectionId,name:device.name||device.model||"Televisor",manufacturer:device.manufacturer||"",model:device.model||"",capabilities:Array.isArray(result.capabilities)?result.capabilities:[]};
   localStorage.setItem(PAIRED_KEY,JSON.stringify(pairedTv));render();
   $("#remote-status").textContent="Televisor vinculado. Los botones enviarán órdenes al dispositivo.";
   $("#tv-remote").scrollIntoView({behavior:"smooth",block:"center"});
@@ -70,7 +82,7 @@ async function pairTv(device,button){
 async function sendTvCommand(command){
  const plugin=tvPlugin();
  if(!pairedTv||!plugin||typeof plugin.sendCommand!=="function"){ $("#remote-status").textContent="No hay una conexión nativa activa con el televisor.";return;}
- if(pairedTv.capabilities.length&&!pairedTv.capabilities.includes(command)){ $("#remote-status").textContent="Este modelo no ofrece esa función.";return;}
+ if(Array.isArray(pairedTv.capabilities)&&pairedTv.capabilities.length&&!pairedTv.capabilities.includes(command)){ $("#remote-status").textContent="Este modelo no ofrece esa función.";return;}
  document.querySelectorAll("[data-tv-command]").forEach(b=>b.disabled=true);
  $("#remote-status").textContent="Enviando orden…";
  try{
@@ -86,6 +98,32 @@ $("#disconnect-tv").addEventListener("click",async()=>{
  pairedTv=null;localStorage.removeItem(PAIRED_KEY);render();discoveryStatus.textContent="Televisor desvinculado.";
 });
 render();
+
+async function restoreNativeTvSession(){
+ const plugin=tvPlugin();
+ if(!pairedTv||pairedTv.source!=="native"||!plugin||typeof plugin.discover!=="function"||typeof plugin.pair!=="function")return;
+ $("#remote-status").textContent="Buscando tu televisor guardado para restaurar la conexión…";
+ try{
+  const response=await plugin.discover();
+  discovered=Array.isArray(response?.devices)?response.devices:[];
+  const candidate=discovered.find(device=>
+   device.id===pairedTv.id ||
+   (pairedTv.address&&device.address===pairedTv.address&&(!pairedTv.platform||device.platform===pairedTv.platform))
+  );
+  if(!candidate){
+   $("#remote-status").textContent="No encontramos el televisor guardado en esta red. Comprueba que esté encendido y conectado al mismo Wi‑Fi.";
+   return;
+  }
+  const result=await plugin.pair({deviceId:candidate.id});
+  if(!result?.paired||!result.connectionId)throw new Error("No se pudo restaurar la sesión del televisor.");
+  pairedTv={...pairedTv,id:candidate.id,address:candidate.address||pairedTv.address,platform:candidate.platform||pairedTv.platform,port:result.port||candidate.port||pairedTv.port,connectionId:result.connectionId,capabilities:Array.isArray(result.capabilities)?result.capabilities:[]};
+  localStorage.setItem(PAIRED_KEY,JSON.stringify(pairedTv));
+  $("#remote-status").textContent="Conectado de nuevo con "+(pairedTv.name||"tu televisor")+".";
+ }catch(error){
+  $("#remote-status").textContent=error?.message||"No se pudo restaurar la conexión. Pulsa Buscar dispositivos para volver a vincularlo.";
+ }
+}
+void restoreNativeTvSession();
 
 
 // --- Conexión real con Home Assistant mediante su API WebSocket local ---
