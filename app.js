@@ -80,6 +80,12 @@ async function pairTv(device,button){
  }catch(error){discoveryStatus.textContent=error?.message||"No se pudo vincular el televisor.";button.disabled=false;button.textContent="Volver a intentar";}
 }
 async function sendTvCommand(command){
+ // If the selected TV comes from Home Assistant, route the command through its
+ // authenticated WebSocket session instead of the native LAN plugin.
+ if(pairedTv?.source==="home_assistant"){
+  await sendHomeAssistantCommand(command);
+  return;
+ }
  const plugin=tvPlugin();
  if(!pairedTv||!plugin||typeof plugin.sendCommand!=="function"){ $("#remote-status").textContent="No hay una conexión nativa activa con el televisor.";return;}
  if(Array.isArray(pairedTv.capabilities)&&pairedTv.capabilities.length&&!pairedTv.capabilities.includes(command)){ $("#remote-status").textContent="Este modelo no ofrece esa función.";return;}
