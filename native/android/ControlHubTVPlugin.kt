@@ -3,6 +3,7 @@ package com.controlhub.tv
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
@@ -17,98 +18,167 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
 import org.json.JSONObject
+import java.net.Inet4Address
 import java.net.InetAddress
-import java.net.URI
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.security.cert.CertificateException
+import java.security.cert.X509Certificate
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
 
 /**
- * Local-network TV discovery and explicitly authorized vendor sessions.
- * Supported transport scope: LG webOS over ws://:3000 and Samsung Tizen
- * legacy remote control over ws://:8001. TLS-only Samsung models and newer
- * vendor variants are reported as unsupported rather than bypassing TLS.
+ * Descubrimiento de televisores de la LAN y sesiones explícitamente autorizadas.
+ * LG webOS: intenta WSS/3001 con pinning del certificado en el primer vínculo
+ * y después WS/3000 como alternativa para modelos antiguos.
+ * Samsung: WS heredado/8001. Los protocolos TLS-only no se degradan a texto plano.
  */
 @CapacitorPlugin(name = "ControlHubTV")
 class ControlHubTVPlugin : Plugin() {
     private data class Candidate(
-        val id: String, val name: String, val serviceType: String,
-        val address: String, val port: Int
+        val id: String,
+        val name: String,
+        val serviceType: String,
+        val address: String,
+        val port: Int
     )
+
     private data class Session(
-        val platform: String, val socket: WebSocket,
+        val platform: String,
+        val host: String,
+        val socket: WebSocket,
         @Volatile var registered: Boolean = false
     )
 
     private val discovered = ConcurrentHashMap<String, Candidate>()
     private val sessions = ConcurrentHashMap<String, Session>()
-    private val client = OkHttpClient.Builder()
+    private val handler = Handler(Looper.getMainLooper())
+    private val baseClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .writeTimeout(8, TimeUnit.SECONDS)
+        .pingInterval(25, TimeUnit.SECONDS)
         .build()
+
+    private val preferences by lazy {
+        context.getSharedPreferences("aureon_tv_pairings", Context.MODE_PRIVATE)
+    }
+
     private val serviceTypes = listOf(
-        "_webos._tcp.", "_samsungmsf._tcp.", "_samsung-smart-tv._tcp.",
-        "_googlecast._tcp.", "_androidtvremote2._tcp."
+        "_webos._tcp.",
+        "_webos-second-screen._tcp.",
+        "_samsungmsf._tcp.",
+        "_samsung-smart-tv._tcp.",
+        "_googlecast._tcp.",
+        "_androidtvremote2._tcp."
     )
 
     @PluginMethod
     fun discover(call: PluginCall) {
-        val manager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+        val manager = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
+        if (manager == null) {
+            call.reject("Android no ofrece el servicio de detección de dispositivos en esta versión.")
+            return
+        }
+
         discovered.clear()
         val listeners = mutableListOf<NsdManager.DiscoveryListener>()
-        val finished = AtomicBoolean(false)
-        val handler = Handler(Looper.getMainLooper())
-        fun finish() {
-            if (!finished.compareAndSet(false, true)) return
-            listeners.forEach { try { manager.stopServiceDiscovery(it) } catch (_: Exception) {} }
-            handler.postDelayed({
-                val array = JSArray()
-                discovered.values.sortedBy { it.name }.forEach { c ->
-                    val item = JSObject()
-                    item.put("id", c.id)
-                    item.put("name", c.name)
-                    item.put("platform", c.serviceType)
-                    item.put("protocol", "DNS-SD")
-                    item.put("address", c.address)
-                    item.put("port", c.port)
-                    item.put("manufacturer", manufacturer(c.serviceType, c.name))
-                    array.put(item)
-                }
-                val out = JSObject()
-                out.put("devices", array)
-                call.resolve(out)
-            }, 900L)
+        val completed = AtomicBoolean(false)
+        var multicastLock: WifiManager.MulticastLock? = null
+
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            multicastLock = wifi?.createMulticastLock("AUREON_TV_DISCOVERY")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (_: Exception) {
+            // Android 13+ manages foreground mDNS reception on current system extensions.
         }
-        serviceTypes.forEach { type ->
+
+        fun finish() {
+            if (!completed.compareAndSet(false, true)) return
+            listeners.forEach { listener ->
+                try { manager.stopServiceDiscovery(listener) } catch (_: Exception) {}
+            }
+            try { if (multicastLock?.isHeld == true) multicastLock?.release() } catch (_: Exception) {}
+
+            val items = JSArray()
+            discovered.values
+                .filter { isLocalAddress(it.address) }
+                .sortedBy { it.name.lowercase() }
+                .forEach { candidate ->
+                    val item = JSObject()
+                    item.put("id", candidate.id)
+                    item.put("name", candidate.name)
+                    item.put("platform", candidate.serviceType)
+                    item.put("protocol", "DNS-SD")
+                    item.put("address", candidate.address)
+                    item.put("port", candidate.port)
+                    item.put("manufacturer", manufacturer(candidate.serviceType, candidate.name))
+                    items.put(item)
+                }
+
+            val result = JSObject()
+            result.put("devices", items)
+            result.put("scanDurationMs", 6500)
+            call.resolve(result)
+        }
+
+        serviceTypes.forEach { serviceType ->
             val listener = object : NsdManager.DiscoveryListener {
-                override fun onDiscoveryStarted(serviceType: String) = Unit
+                override fun onDiscoveryStarted(type: String) = Unit
+
                 override fun onServiceFound(info: NsdServiceInfo) {
                     try {
                         manager.resolveService(info, object : NsdManager.ResolveListener {
                             override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
+
                             override fun onServiceResolved(resolved: NsdServiceInfo) {
-                                val ip = resolved.host?.hostAddress ?: return
-                                val id = "${resolved.serviceName}|${resolved.serviceType}|$ip|${resolved.port}"
-                                discovered[id] = Candidate(id, resolved.serviceName, resolved.serviceType, ip, resolved.port)
+                                val host = resolved.host?.hostAddress ?: return
+                                if (!isLocalAddress(host)) return
+                                val resolvedType = resolved.serviceType ?: serviceType
+                                val id = "${resolved.serviceName}|${resolvedType}|${host}|${resolved.port}"
+                                discovered[id] = Candidate(
+                                    id = id,
+                                    name = resolved.serviceName ?: "Televisor",
+                                    serviceType = resolvedType,
+                                    address = host,
+                                    port = resolved.port
+                                )
                             }
                         })
-                    } catch (_: Exception) {}
+                    } catch (_: Exception) {
+                        // Unsupported or temporarily busy service resolutions are ignored.
+                    }
                 }
-                override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
-                override fun onDiscoveryStopped(serviceType: String) = Unit
-                override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+
+                override fun onServiceLost(info: NsdServiceInfo) = Unit
+                override fun onDiscoveryStopped(type: String) = Unit
+
+                override fun onStartDiscoveryFailed(type: String, errorCode: Int) {
                     try { manager.stopServiceDiscovery(this) } catch (_: Exception) {}
                 }
-                override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+
+                override fun onStopDiscoveryFailed(type: String, errorCode: Int) = Unit
             }
+
             listeners.add(listener)
-            try { manager.discoverServices(type, NsdManager.PROTOCOL_DNS_SD, listener) }
-            catch (_: Exception) { }
+            try {
+                manager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+            } catch (_: Exception) {
+                // Other service types continue scanning.
+            }
         }
-        handler.postDelayed({ finish() }, 6500L)
+
+        handler.postDelayed({ finish() }, 7200L)
     }
 
     @PluginMethod
@@ -116,122 +186,262 @@ class ControlHubTVPlugin : Plugin() {
         val id = call.getString("deviceId")
         val candidate = id?.let { discovered[it] }
         if (candidate == null) {
-            call.reject("El televisor ya no está en la lista de dispositivos detectados. Vuelve a buscar.")
+            call.reject("El televisor ya no está en la lista de dispositivos. Pulsa Buscar dispositivos otra vez.")
             return
         }
+        if (!isLocalAddress(candidate.address)) {
+            call.reject("Por seguridad, AUREON TV solo puede vincular dispositivos de la red local.")
+            return
+        }
+
         val type = candidate.serviceType.lowercase()
         when {
             type.contains("webos") -> pairLg(candidate, call)
             type.contains("samsung") -> pairSamsung(candidate, call)
-            else -> call.reject("Se detectó el servicio, pero todavía no hay un adaptador de vinculación para esta plataforma.")
+            else -> call.reject("Se detectó este dispositivo, pero su protocolo de control todavía no está implementado.")
         }
     }
 
-    private fun pairLg(c: Candidate, call: PluginCall) {
+    private fun pairLg(candidate: Candidate, call: PluginCall) {
+        val ports = listOf(3001, candidate.port, 3000).distinct().filter { it in 1..65535 }
         val connectionId = UUID.randomUUID().toString()
-        val request = Request.Builder().url("ws://${c.address}:3000").build()
-        val listener = object : WebSocketListener() {
-            private var finished = false
-            override fun onOpen(ws: WebSocket, response: Response) {
-                val manifest = JSONObject()
-                    .put("manifest", JSONObject()
-                        .put("manifestVersion", 1)
-                        .put("appVersion", "1.0")
-                        .put("signed", JSONObject()
-                            .put("created", "20261107")
-                            .put("appId", "com.aureontv.controlhub")
-                            .put("vendorId", "AUREON")
-                            .put("localizedAppNames", JSONObject().put("es", "AUREON TV").put("en", "AUREON TV"))
-                            .put("localizedVendorNames", JSONObject().put("es", "AUREON").put("en", "AUREON"))
-                            .put("permissions", org.json.JSONArray(listOf(
-                                "CONTROL_AUDIO", "CONTROL_INPUT_TEXT", "CONTROL_MOUSE_AND_KEYBOARD",
-                                "CONTROL_POWER", "READ_CURRENT_CHANNEL", "READ_RUNNING_APPS",
-                                "WRITE_NOTIFICATION_TOAST", "READ_NOTIFICATIONS"
-                            )))
-                        )
+        val allFinished = AtomicBoolean(false)
+
+        fun attempt(index: Int) {
+            if (allFinished.get()) return
+            if (index >= ports.size) {
+                if (allFinished.compareAndSet(false, true)) {
+                    call.reject(
+                        "No se pudo vincular el LG. Enciende el televisor, comprueba que el teléfono esté en el mismo Wi-Fi y acepta la solicitud de AUREON TV en la pantalla. Algunos modelos solo admiten el protocolo seguro de su versión webOS."
                     )
-                    .put("type", "register")
-                ws.send(manifest.toString())
-                Handler(Looper.getMainLooper()).postDelayed({
-                    if (!finished) {
-                        finished = true
-                        ws.cancel()
-                        call.reject("No llegó la confirmación de LG en 45 segundos. Acepta el aviso en la pantalla del televisor y vuelve a intentar.")
-                    }
-                }, 45000L)
+                }
+                return
             }
-            override fun onMessage(ws: WebSocket, text: String) {
-                try {
-                    val msg = JSONObject(text)
-                    val type = msg.optString("type")
-                    if (type == "registered" || (type == "response" && msg.optJSONObject("payload")?.optString("pairingType") != null)) {
-                        if (!finished) {
-                            finished = true
-                            sessions[connectionId] = Session("lg", ws, true)
-                            val out = JSObject()
-                            out.put("paired", true)
-                            out.put("connectionId", connectionId)
-                            out.put("capabilities", capabilities())
-                            call.resolve(out)
+
+            val port = ports[index]
+            val secure = port == 3001
+            val client = try {
+                if (secure) pinnedLgClient(candidate.address) else baseClient
+            } catch (error: Exception) {
+                handler.post { attempt(index + 1) }
+                return
+            }
+
+            val host = urlHost(candidate.address)
+            val scheme = if (secure) "wss" else "ws"
+            val request = Request.Builder().url("$scheme://$host:$port").build()
+            val attemptFinished = AtomicBoolean(false)
+
+            fun failAndContinue() {
+                if (!attemptFinished.compareAndSet(false, true) || allFinished.get()) return
+                handler.postDelayed({ attempt(index + 1) }, 250L)
+            }
+
+            val listener = object : WebSocketListener() {
+                override fun onOpen(socket: WebSocket, response: Response) {
+                    if (secure) {
+                        try {
+                            val certificate = response.handshake?.peerCertificates?.firstOrNull() as? X509Certificate
+                                ?: throw CertificateException("El televisor no presentó un certificado TLS.")
+                            saveLgCertificatePin(candidate.address, certificate)
+                        } catch (error: Exception) {
+                            socket.cancel()
+                            failAndContinue()
+                            return
                         }
-                    } else if (type == "error") {
-                        fail("El televisor LG rechazó la vinculación. Revisa la solicitud en la pantalla del TV.")
                     }
-                } catch (_: Exception) {}
+
+                    val payload = JSONObject()
+                        .put("forcePairing", false)
+                        .put("pairingType", "PROMPT")
+                        .put(
+                            "manifest",
+                            JSONObject()
+                                .put("manifestVersion", 1)
+                                .put("appVersion", "1.1")
+                                .put(
+                                    "permissions",
+                                    JSONArray(
+                                        listOf(
+                                            "CONTROL_AUDIO",
+                                            "CONTROL_INPUT_TEXT",
+                                            "CONTROL_MOUSE_AND_KEYBOARD",
+                                            "CONTROL_POWER",
+                                            "READ_CURRENT_CHANNEL",
+                                            "READ_RUNNING_APPS",
+                                            "WRITE_NOTIFICATION_TOAST",
+                                            "READ_NOTIFICATIONS"
+                                        )
+                                    )
+                                )
+                        )
+
+                    val savedKey = preferences.getString(lgClientKeyName(candidate.address), null)
+                    if (!savedKey.isNullOrBlank()) {
+                        payload.put("client-key", savedKey)
+                    }
+
+                    val register = JSONObject()
+                        .put("type", "register")
+                        .put("id", "aureon-register")
+                        .put("payload", payload)
+
+                    if (!socket.send(register.toString())) {
+                        socket.cancel()
+                        failAndContinue()
+                        return
+                    }
+
+                    handler.postDelayed({
+                        if (!attemptFinished.get() && !allFinished.get()) {
+                            socket.cancel()
+                            failAndContinue()
+                        }
+                    }, 45000L)
+                }
+
+                override fun onMessage(socket: WebSocket, text: String) {
+                    try {
+                        val message = JSONObject(text)
+                        when (message.optString("type")) {
+                            "registered" -> {
+                                if (attemptFinished.compareAndSet(false, true) &&
+                                    allFinished.compareAndSet(false, true)
+                                ) {
+                                    val key = message.optJSONObject("payload")?.optString("client-key")
+                                    if (!key.isNullOrBlank() && key != "null") {
+                                        preferences.edit()
+                                            .putString(lgClientKeyName(candidate.address), key)
+                                            .apply()
+                                    }
+                                    sessions[connectionId] = Session("lg", candidate.address, socket, true)
+                                    val result = JSObject()
+                                    result.put("paired", true)
+                                    result.put("connectionId", connectionId)
+                                    result.put("capabilities", capabilities())
+                                    result.put("address", candidate.address)
+                                    result.put("port", port)
+                                    result.put("secure", secure)
+                                    call.resolve(result)
+                                }
+                            }
+
+                            "error" -> {
+                                socket.cancel()
+                                failAndContinue()
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // Ignore unrelated status notifications.
+                    }
+                }
+
+                override fun onFailure(socket: WebSocket, error: Throwable, response: Response?) {
+                    failAndContinue()
+                }
             }
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                fail("No se pudo conectar con LG webOS por el puerto 3000. Comprueba que LG Connect Apps esté activado y que el modelo admita este protocolo.")
-            }
-            private fun fail(message: String) {
-                if (!finished) { finished = true; call.reject(message) }
-            }
+
+            client.newWebSocket(request, listener)
         }
-        client.newWebSocket(request, listener)
+
+        attempt(0)
     }
 
-    private fun pairSamsung(c: Candidate, call: PluginCall) {
-        // Use the non-TLS legacy endpoint only. Never disable certificate validation.
+    /**
+     * First-time WSS pairing accepts the TV's self-signed certificate only after
+     * the user chose this discovered LAN device. Its SHA-256 fingerprint is
+     * pinned in app-private storage; subsequent sessions reject certificate changes.
+     */
+    private fun pinnedLgClient(host: String): OkHttpClient {
+        val savedPin = preferences.getString(lgCertificatePinName(host), null)
+        val trustManager = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+
+            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+                if (chain.isEmpty()) throw CertificateException("Certificado del televisor vacío.")
+                val receivedPin = certificateFingerprint(chain[0])
+                if (!savedPin.isNullOrBlank() && !savedPin.equals(receivedPin, ignoreCase = true)) {
+                    throw CertificateException("El certificado del televisor cambió. Desvincula el TV y vuelve a autorizarlo.")
+                }
+            }
+
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+
+        val sslContext = SSLContext.getInstance("TLS")
+        sslContext.init(null, arrayOf(trustManager), SecureRandom())
+
+        val hostVerifier = HostnameVerifier { requestedHost, _ ->
+            requestedHost.equals(host, ignoreCase = true)
+        }
+
+        return baseClient.newBuilder()
+            .sslSocketFactory(sslContext.socketFactory, trustManager)
+            .hostnameVerifier(hostVerifier)
+            .build()
+    }
+
+    private fun saveLgCertificatePin(host: String, certificate: X509Certificate) {
+        val key = lgCertificatePinName(host)
+        val existing = preferences.getString(key, null)
+        val current = certificateFingerprint(certificate)
+        if (!existing.isNullOrBlank() && !existing.equals(current, ignoreCase = true)) {
+            throw CertificateException("El certificado del televisor cambió.")
+        }
+        preferences.edit().putString(key, current).apply()
+    }
+
+    private fun certificateFingerprint(certificate: X509Certificate): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
+        return digest.joinToString(":") { "%02X".format(it) }
+    }
+
+    private fun pairSamsung(candidate: Candidate, call: PluginCall) {
         val encodedName = Base64.encodeToString("AUREON TV".toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
         val connectionId = UUID.randomUUID().toString()
+        val host = urlHost(candidate.address)
         val request = Request.Builder()
-            .url("ws://${c.address}:8001/api/v2/channels/samsung.remote.control?name=$encodedName")
+            .url("ws://$host:8001/api/v2/channels/samsung.remote.control?name=$encodedName")
             .build()
+        val finished = AtomicBoolean(false)
+
         val listener = object : WebSocketListener() {
-            private var finished = false
-            override fun onOpen(ws: WebSocket, response: Response) {
-                Handler(Looper.getMainLooper()).postDelayed({
-                    if (!finished) {
-                        finished = true
-                        ws.cancel()
-                        call.reject("No llegó la autorización de Samsung en 45 segundos. Acepta la solicitud en la pantalla del TV y vuelve a intentar.")
-                    }
-                }, 45000L)
-            }
-            override fun onMessage(ws: WebSocket, text: String) {
+            override fun onMessage(socket: WebSocket, text: String) {
                 try {
-                    val msg = JSONObject(text)
-                    val event = msg.optString("event")
-                    if (event == "ms.channel.connect") {
-                        finished = true
-                        sessions[connectionId] = Session("samsung", ws, true)
-                        val out = JSObject()
-                        out.put("paired", true)
-                        out.put("connectionId", connectionId)
-                        out.put("capabilities", capabilities())
-                        call.resolve(out)
+                    val event = JSONObject(text).optString("event")
+                    if (event == "ms.channel.connect" && finished.compareAndSet(false, true)) {
+                        sessions[connectionId] = Session("samsung", candidate.address, socket, true)
+                        val result = JSObject()
+                        result.put("paired", true)
+                        result.put("connectionId", connectionId)
+                        result.put("capabilities", capabilities())
+                        call.resolve(result)
                     } else if (event == "ms.channel.unauthorized") {
-                        fail("El televisor Samsung no autorizó la conexión. Acepta la solicitud en la pantalla del TV y vuelve a intentar.")
+                        if (finished.compareAndSet(false, true)) {
+                            socket.cancel()
+                            call.reject("El televisor Samsung rechazó la conexión. Acepta la solicitud en la pantalla del TV.")
+                        }
                     }
                 } catch (_: Exception) {}
             }
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                fail("No se pudo abrir el canal Samsung sin cifrar (puerto 8001). Este modelo puede exigir WSS/puerto 8002; AUREON no desactiva la validación TLS, así que aún no es compatible con ese modo.")
+
+            override fun onFailure(socket: WebSocket, error: Throwable, response: Response?) {
+                if (finished.compareAndSet(false, true)) {
+                    call.reject("No se pudo conectar al protocolo LAN heredado de Samsung. Este modelo puede requerir WSS/8002, que aún no está habilitado.")
+                }
             }
-            private fun fail(message: String) {
-                if (!finished) { finished = true; call.reject(message) }
+
+            override fun onOpen(socket: WebSocket, response: Response) {
+                handler.postDelayed({
+                    if (finished.compareAndSet(false, true)) {
+                        socket.cancel()
+                        call.reject("No llegó la autorización de Samsung. Acepta la solicitud en la pantalla del televisor y vuelve a intentar.")
+                    }
+                }, 45000L)
             }
         }
-        client.newWebSocket(request, listener)
+
+        baseClient.newWebSocket(request, listener)
     }
 
     @PluginMethod
@@ -243,6 +453,7 @@ class ControlHubTVPlugin : Plugin() {
             call.reject("No existe una sesión autorizada con el televisor. Vuelve a vincularlo.")
             return
         }
+
         val key = when (command) {
             "power" -> "POWER"
             "mute" -> "MUTE"
@@ -254,45 +465,77 @@ class ControlHubTVPlugin : Plugin() {
             "left" -> "LEFT"
             "right" -> "RIGHT"
             "select" -> "ENTER"
-            "volume_up" -> "VOLUMEUP"
-            "volume_down" -> "VOLUMEDOWN"
+            "volume_up" -> if (session.platform == "samsung") "VOLUP" else "VOLUMEUP"
+            "volume_down" -> if (session.platform == "samsung") "VOLDOWN" else "VOLUMEDOWN"
             "play_pause" -> "PLAY"
             else -> null
         }
-        if (key == null) { call.reject("Orden no reconocida."); return }
+
+        if (key == null) {
+            call.reject("Orden no reconocida.")
+            return
+        }
+
         val payload = if (session.platform == "lg") {
-            JSONObject().put("type", "request")
+            JSONObject()
+                .put("type", "request")
                 .put("id", "aureon-${UUID.randomUUID()}")
                 .put("uri", "ssap://com.webos.service.networkinput/sendKey")
                 .put("payload", JSONObject().put("key", key))
         } else {
-            JSONObject().put("method", "ms.remote.control")
-                .put("params", JSONObject().put("Cmd", "Click").put("DataOfCmd", "KEY_$key")
-                    .put("Option", "false").put("TypeOfRemote", "SendRemoteKey"))
+            JSONObject()
+                .put("method", "ms.remote.control")
+                .put(
+                    "params",
+                    JSONObject()
+                        .put("Cmd", "Click")
+                        .put("DataOfCmd", "KEY_$key")
+                        .put("Option", "false")
+                        .put("TypeOfRemote", "SendRemoteKey")
+                )
         }
-        val accepted = session.socket.send(payload.toString())
-        if (!accepted) { call.reject("La conexión con el televisor se cerró; vuelve a vincularlo."); return }
-        val out = JSObject()
-        out.put("accepted", true)
-        call.resolve(out)
+
+        if (!session.socket.send(payload.toString())) {
+            call.reject("La conexión con el televisor se cerró. Vuelve a vincularlo.")
+            return
+        }
+
+        val result = JSObject()
+        result.put("accepted", true)
+        call.resolve(result)
     }
 
     @PluginMethod
     fun unpair(call: PluginCall) {
         val id = call.getString("connectionId")
-        id?.let { sessions.remove(it)?.socket?.close(1000, "AUREON desvinculado") }
+        id?.let {
+            val session = sessions.remove(it)
+            session?.socket?.close(1000, "AUREON TV desvinculado")
+            if (session?.platform == "lg") {
+                preferences.edit()
+                    .remove(lgClientKeyName(session.host))
+                    .remove(lgCertificatePinName(session.host))
+                    .apply()
+            }
+        }
         call.resolve()
     }
 
     override fun handleOnDestroy() {
-        sessions.values.forEach { try { it.socket.close(1000, "App cerrada") } catch (_: Exception) {} }
+        sessions.values.forEach { session ->
+            try { session.socket.close(1000, "AUREON TV cerrado") } catch (_: Exception) {}
+        }
         sessions.clear()
-        client.dispatcher.executorService.shutdown()
+        baseClient.dispatcher.executorService.shutdown()
+        baseClient.connectionPool.evictAll()
         super.handleOnDestroy()
     }
 
+    private fun lgClientKeyName(host: String) = "lg_client_key_$host"
+    private fun lgCertificatePinName(host: String) = "lg_certificate_pin_$host"
+
     private fun manufacturer(type: String, name: String): String {
-        val value = (type + " " + name).lowercase()
+        val value = "$type $name".lowercase()
         return when {
             value.contains("webos") -> "LG"
             value.contains("samsung") -> "Samsung"
@@ -301,7 +544,34 @@ class ControlHubTVPlugin : Plugin() {
     }
 
     private fun capabilities(): JSArray = JSArray().apply {
-        listOf("power", "mute", "home", "back", "menu", "up", "down", "left", "right",
-            "select", "volume_up", "volume_down", "play_pause").forEach { put(it) }
+        listOf(
+            "power", "mute", "home", "back", "menu",
+            "up", "down", "left", "right", "select",
+            "volume_up", "volume_down", "play_pause"
+        ).forEach { put(it) }
+    }
+
+    private fun urlHost(address: String): String =
+        if (address.contains(":") && !address.startsWith("[")) "[$address]" else address
+
+    private fun isLocalAddress(value: String): Boolean {
+        return try {
+            val address = InetAddress.getByName(value)
+            if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isMulticastAddress) {
+                false
+            } else if (address is Inet4Address) {
+                val b = address.address.map { it.toInt() and 0xFF }
+                (b[0] == 10) ||
+                    (b[0] == 172 && b[1] in 16..31) ||
+                    (b[0] == 192 && b[1] == 168) ||
+                    (b[0] == 169 && b[1] == 254) ||
+                    (b[0] == 100 && b[1] in 64..127)
+            } else {
+                address.isLinkLocalAddress || address.isSiteLocalAddress ||
+                    value.lowercase().startsWith("fc") || value.lowercase().startsWith("fd")
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 }
