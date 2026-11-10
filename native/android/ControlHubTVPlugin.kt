@@ -217,12 +217,12 @@ class ControlHubTVPlugin : Plugin() {
                 socket.broadcast = true
                 targets.forEach { target ->
                     val request = (
-                        "M-SEARCH * HTTP/1.1\\r\\n" +
-                        "HOST: 239.255.255.250:1900\\r\\n" +
-                        "MAN: \\"ssdp:discover\\"\\r\\n" +
-                        "MX: 2\\r\\n" +
-                        "ST: $target\\r\\n\\r\\n"
-                    ).toByteArray(Charsets.US_ASCII)
+                        "M-SEARCH * HTTP/1.1\r\n" +
+                        "HOST: 239.255.255.250:1900\r\n" +
+                        "MAN: \"ssdp:discover\"\r\n" +
+                        "MX: 2\r\n" +
+                        "ST: $target\r\n\r\n"
+                    )                    ).toByteArray(Charsets.US_ASCII)
                     try {
                         socket.send(DatagramPacket(request, request.size, multicastAddress, 1900))
                     } catch (_: Exception) {}
