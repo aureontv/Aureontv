@@ -47,7 +47,9 @@ class ControlHubTVPlugin : Plugin() {
         val name: String,
         val serviceType: String,
         val address: String,
-        val port: Int
+        val port: Int,
+        val manufacturer: String? = null,
+        val model: String? = null
     )
 
     private data class Session(
@@ -122,7 +124,8 @@ class ControlHubTVPlugin : Plugin() {
                     item.put("protocol", "DNS-SD")
                     item.put("address", candidate.address)
                     item.put("port", candidate.port)
-                    item.put("manufacturer", manufacturer(candidate.serviceType, candidate.name))
+                    item.put("manufacturer", candidate.manufacturer ?: manufacturer(candidate.serviceType, candidate.name))
+                    if (!candidate.model.isNullOrBlank()) item.put("model", candidate.model)
                     items.put(item)
                 }
 
@@ -131,6 +134,10 @@ class ControlHubTVPlugin : Plugin() {
             result.put("scanDurationMs", 6500)
             call.resolve(result)
         }
+
+        // LG webOS commonly advertises its Second Screen service through SSDP/UPnP
+        // rather than Bonjour. Run SSDP alongside DNS-SD in the same scan window.
+        Thread({ discoverLgSsdp() }, "AUREON-TV-SSDP").start()
 
         serviceTypes.forEach { serviceType ->
             val listener = object : NsdManager.DiscoveryListener {
@@ -179,6 +186,144 @@ class ControlHubTVPlugin : Plugin() {
         }
 
         handler.postDelayed({ finish() }, 7200L)
+    }
+
+    private data class SsdpMetadata(
+        val name: String,
+        val manufacturer: String,
+        val model: String,
+        val udn: String?
+    )
+
+    /**
+     * Discover LG webOS TVs through their documented UPnP/SSDP advertisements.
+     * Only private/local LOCATION hosts are fetched; redirects are not followed.
+     */
+    private fun discoverLgSsdp() {
+        val targets = listOf(
+            "urn:lge-com:service:webos-second-screen:1",
+            "urn:schemas-upnp-org:device:MediaRenderer:1",
+            "urn:schemas-upnp-org:device:Basic:1"
+        )
+        val multicastAddress = try {
+            InetAddress.getByName("239.255.255.250")
+        } catch (_: Exception) {
+            return
+        }
+
+        try {
+            MulticastSocket().use { socket ->
+                socket.soTimeout = 450
+                socket.broadcast = true
+                targets.forEach { target ->
+                    val request = (
+                        "M-SEARCH * HTTP/1.1\\r\\n" +
+                        "HOST: 239.255.255.250:1900\\r\\n" +
+                        "MAN: \\"ssdp:discover\\"\\r\\n" +
+                        "MX: 2\\r\\n" +
+                        "ST: $target\\r\\n\\r\\n"
+                    ).toByteArray(Charsets.US_ASCII)
+                    try {
+                        socket.send(DatagramPacket(request, request.size, multicastAddress, 1900))
+                    } catch (_: Exception) {}
+                }
+
+                val deadline = System.currentTimeMillis() + 3600L
+                val buffer = ByteArray(8192)
+                while (System.currentTimeMillis() < deadline) {
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    try {
+                        socket.receive(packet)
+                    } catch (_: SocketTimeoutException) {
+                        continue
+                    } catch (_: Exception) {
+                        break
+                    }
+
+                    val headers = parseSsdpHeaders(
+                        String(packet.data, packet.offset, packet.length, Charsets.ISO_8859_1)
+                    )
+                    val location = headers["location"] ?: continue
+                    val url = try { URL(location) } catch (_: Exception) { continue }
+                    if (url.protocol != "http" || !isLocalAddress(url.host)) continue
+
+                    val metadata = readLgSsdpDescription(url) ?: continue
+                    val responseTarget = headers["st"].orEmpty().lowercase()
+                    val brand = metadata.manufacturer.lowercase()
+                    if (!brand.contains("lg") && !responseTarget.contains("lge") &&
+                        !responseTarget.contains("webos")
+                    ) continue
+
+                    val address = url.host
+                    if (!isLocalAddress(address)) continue
+                    val id = "${metadata.udn ?: headers["usn"] ?: metadata.name}|ssdp|$address"
+                    discovered[id] = Candidate(
+                        id = id,
+                        name = metadata.name.ifBlank { "LG webOS TV" },
+                        serviceType = "urn:lge-com:service:webos-second-screen:1",
+                        address = address,
+                        port = 3000,
+                        manufacturer = metadata.manufacturer.ifBlank { "LG" },
+                        model = metadata.model
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            // DNS-SD discovery continues if SSDP is blocked by the router or Android.
+        }
+    }
+
+    private fun parseSsdpHeaders(response: String): Map<String, String> {
+        val headers = mutableMapOf<String, String>()
+        response.lineSequence().drop(1).forEach { line ->
+            val separator = line.indexOf(':')
+            if (separator > 0) {
+                headers[line.substring(0, separator).trim().lowercase()] =
+                    line.substring(separator + 1).trim()
+            }
+        }
+        return headers
+    }
+
+    private fun readLgSsdpDescription(url: URL): SsdpMetadata? {
+        val connection = try {
+            (url.openConnection() as? HttpURLConnection) ?: return null
+        } catch (_: Exception) {
+            return null
+        }
+
+        return try {
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 1400
+            connection.readTimeout = 1400
+            connection.requestMethod = "GET"
+            connection.connect()
+            if (connection.responseCode !in 200..299) return null
+
+            val factory = DocumentBuilderFactory.newInstance()
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false)
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            factory.isXIncludeAware = false
+            factory.isExpandEntityReferences = false
+            val document = connection.inputStream.use { input ->
+                factory.newDocumentBuilder().parse(input)
+            }
+
+            fun value(tag: String): String =
+                document.getElementsByTagName(tag).item(0)?.textContent?.trim().orEmpty()
+
+            SsdpMetadata(
+                name = value("friendlyName"),
+                manufacturer = value("manufacturer"),
+                model = value("modelName").ifBlank { value("modelNumber") },
+                udn = value("UDN").ifBlank { null }
+            )
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
     }
 
     @PluginMethod
