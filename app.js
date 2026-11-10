@@ -17,7 +17,7 @@ function render(){
  $("#room-count").textContent=new Set(devices.map(d=>d.room).filter(Boolean)).size;
  $("#empty-state").hidden=devices.length>0||!!pairedTv;
  $("#device-grid").innerHTML=devices.map(d=>'<article class="device-card"><div class="device-icon">'+(icons[d.type]||"◇")+'</div><h3>'+escapeHTML(d.name)+'</h3><p>'+(labels[d.type]||"Dispositivo")+' · '+escapeHTML(d.model||"Modelo por configurar")+(d.room?" · "+escapeHTML(d.room):"")+'</p><span class="pending">Pendiente de conexión</span></article>').join("");
- $("#tv-remote").hidden=false; if(pairedTv){$("#remote-device-name").textContent=pairedTv.name||"Televisor";$("#remote-device-model").textContent=[pairedTv.manufacturer,pairedTv.model].filter(Boolean).join(" · ");if(pairedTv.source==="home_assistant"&&!haClient)$("#remote-status").textContent="El televisor está guardado, pero falta conectar el servicio de control.";}else{$("#remote-device-name").textContent="Ningún televisor conectado";$("#remote-device-model").textContent="Enciende tu TV y pulsa «Buscar dispositivos» para vincularlo.";$("#remote-status").textContent="Mando preparado. Los botones enviarán órdenes cuando exista una conexión real con el televisor.";}
+ $("#tv-remote").hidden=!pairedTv; if(pairedTv){$("#remote-device-name").textContent=pairedTv.name||"Televisor";$("#remote-device-model").textContent=[pairedTv.manufacturer,pairedTv.model].filter(Boolean).join(" · ");if(pairedTv.source==="home_assistant"&&!haClient)$("#remote-status").textContent="El televisor está guardado, pero falta conectar el servicio de control.";}else{$("#remote-device-name").textContent="Ningún televisor conectado";$("#remote-device-model").textContent="Enciende tu TV y pulsa «Buscar dispositivos» para vincularlo.";$("#remote-status").textContent="Mando preparado. Los botones enviarán órdenes cuando exista una conexión real con el televisor.";}
 }
 const dialog=$("#device-dialog");function openDialog(){dialog.showModal()}
 $("#add-device").addEventListener("click",openDialog);$("#empty-add").addEventListener("click",openDialog);
@@ -93,7 +93,7 @@ async function sendTvCommand(command){
  $("#remote-status").textContent="Enviando orden…";
  try{
   const result=await plugin.sendCommand({connectionId:pairedTv.connectionId,command});
-  $("#remote-status").textContent=result?.accepted?"Orden enviada al televisor.":"El televisor no confirmó la orden.";
+  $("#remote-status").textContent=result?.accepted?"Orden enviada a la conexión del televisor.":"El televisor no aceptó la orden.";
  }catch(error){$("#remote-status").textContent=error?.message||"No se pudo enviar la orden.";}
  finally{document.querySelectorAll("[data-tv-command]").forEach(b=>b.disabled=false);}
 }
