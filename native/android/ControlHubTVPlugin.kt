@@ -728,7 +728,7 @@ class ControlHubTVPlugin : Plugin() {
             "power" -> "POWER"
             "mute" -> "MUTE"
             "home" -> "HOME"
-            "back" -> "RETURN"
+            "back" -> if (session.platform == "lg") "BACK" else "RETURN"
             "menu" -> "MENU"
             "up" -> "UP"
             "down" -> "DOWN"
