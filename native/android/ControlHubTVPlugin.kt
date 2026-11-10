@@ -459,12 +459,10 @@ class ControlHubTVPlugin : Plugin() {
                     }
 
                     handler.postDelayed({
-                        if (!registrationReceived.get()) {
-                            rejectOnce(
-                                "El televisor LG no respondió a la solicitud de emparejamiento. Comprueba que esté encendido y vuelve a intentarlo.",
-                                socket
-                            )
-                        }
+                        rejectOnce(
+                            "El televisor LG no terminó el emparejamiento o no entregó su canal de navegación. Comprueba el permiso de control remoto y vuelve a intentarlo.",
+                            socket
+                        )
                     }, 45000L)
                 }
 
