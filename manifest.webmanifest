@@ -1,0 +1,15 @@
+{
+  "id": "/",
+  "name": "AUREON TV",
+  "short_name": "AUREON TV",
+  "description": "Centro de control para televisores y dispositivos compatibles.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#101827",
+  "theme_color": "#101827",
+  "icons": [
+    { "src": "/icons/aureon-tv.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
