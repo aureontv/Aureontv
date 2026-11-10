@@ -409,6 +409,8 @@ class ControlHubTVPlugin : Plugin() {
                                     JSONArray(
                                         listOf(
                                             "CONTROL_AUDIO",
+                                            "CONTROL_INPUT_JOYSTICK",
+                                            "CONTROL_INPUT_MEDIA_PLAYBACK",
                                             "CONTROL_INPUT_TEXT",
                                             "CONTROL_MOUSE_AND_KEYBOARD",
                                             "CONTROL_POWER",
