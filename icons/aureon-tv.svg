@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="112" fill="#101827"/>
+<path d="M94 286c42-108 91-108 133 0s91 108 133 0 72-91 58-127" fill="none" stroke="#65e6c1" stroke-width="42" stroke-linecap="round"/>
+<circle cx="418" cy="159" r="22" fill="#65e6c1"/>
+<text x="256" y="410" font-family="Arial,sans-serif" font-size="54" font-weight="700" text-anchor="middle" fill="#fff">AUREON TV</text>
+</svg>
