@@ -293,9 +293,11 @@ class ControlHubTVPlugin : Plugin() {
                     }
 
                     handler.postDelayed({
-                        if (!attemptFinished.get() && !allFinished.get()) {
+                        if (attemptFinished.compareAndSet(false, true) &&
+                            allFinished.compareAndSet(false, true)
+                        ) {
                             socket.cancel()
-                            failAndContinue()
+                            call.reject("El televisor LG no confirmó el emparejamiento. Revisa la pantalla del TV y vuelve a intentar; AUREON no cambia a un canal menos seguro después de una solicitud de autorización.")
                         }
                     }, 45000L)
                 }
@@ -327,8 +329,12 @@ class ControlHubTVPlugin : Plugin() {
                             }
 
                             "error" -> {
-                                socket.cancel()
-                                failAndContinue()
+                                if (attemptFinished.compareAndSet(false, true) &&
+                                    allFinished.compareAndSet(false, true)
+                                ) {
+                                    socket.cancel()
+                                    call.reject("El televisor LG rechazó la solicitud de emparejamiento. No se intentará una conexión menos segura; vuelve a buscar el TV y acepta la solicitud en su pantalla.")
+                                }
                             }
                         }
                     } catch (_: Exception) {
@@ -337,7 +343,17 @@ class ControlHubTVPlugin : Plugin() {
                 }
 
                 override fun onFailure(socket: WebSocket, error: Throwable, response: Response?) {
-                    failAndContinue()
+                    if (secure && isCertificatePinMismatch(error)) {
+                        if (attemptFinished.compareAndSet(false, true) &&
+                            allFinished.compareAndSet(false, true)
+                        ) {
+                            call.reject("El certificado de seguridad del televisor LG cambió. Por protección, AUREON TV detuvo la conexión. Desvincula el televisor y vuelve a autorizarlo si reconoces el cambio.")
+                        }
+                    } else {
+                        // A closed/refused secure port may indicate older firmware;
+                        // only then try the explicitly supported legacy endpoint.
+                        failAndContinue()
+                    }
                 }
             }
 
@@ -345,6 +361,17 @@ class ControlHubTVPlugin : Plugin() {
         }
 
         attempt(0)
+    }
+
+    private fun isCertificatePinMismatch(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current.message?.contains("El certificado del televisor cambió", ignoreCase = true) == true) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     /**
