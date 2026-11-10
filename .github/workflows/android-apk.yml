@@ -110,7 +110,6 @@ jobs:
       - name: Configure Android local-network access for TV discovery
         run: |
           python3 - <<'PY'
-          import re
           from pathlib import Path
 
           p = Path("android/app/src/main/AndroidManifest.xml")
@@ -129,11 +128,10 @@ jobs:
           # The native plugin restricts pairing to addresses discovered on the
           # user's private LAN; secure LG webOS WSS/3001 is attempted first.
           if "android:usesCleartextTraffic=" not in s:
-              s = re.sub(
-                  r"<application(\\s|>)",
-                  r'<application android:usesCleartextTraffic="true"\\1',
-                  s,
-                  count=1,
+              s = s.replace(
+                  "<application",
+                  '<application android:usesCleartextTraffic="true"',
+                  1,
               )
           p.write_text(s)
           PY
