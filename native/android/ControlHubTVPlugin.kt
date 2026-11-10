@@ -25,6 +25,8 @@ import java.net.InetAddress
 import java.net.DatagramPacket
 import java.net.HttpURLConnection
 import java.net.MulticastSocket
+import java.net.NetworkInterface
+import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 import java.net.URL
 import javax.xml.parsers.DocumentBuilderFactory
@@ -100,6 +102,8 @@ class ControlHubTVPlugin : Plugin() {
         discovered.clear()
         val listeners = mutableListOf<NsdManager.DiscoveryListener>()
         val completed = AtomicBoolean(false)
+        val ssdpFinished = AtomicBoolean(false)
+        val nsdWindowFinished = AtomicBoolean(false)
         var multicastLock: WifiManager.MulticastLock? = null
 
         try {
@@ -142,9 +146,20 @@ class ControlHubTVPlugin : Plugin() {
             call.resolve(result)
         }
 
-        // LG webOS commonly advertises its Second Screen service through SSDP/UPnP
-        // rather than Bonjour. Run SSDP alongside DNS-SD in the same scan window.
-        Thread({ discoverLgSsdp() }, "AUREON-TV-SSDP").start()
+        fun finishIfReady() {
+            if (nsdWindowFinished.get() && ssdpFinished.get()) finish()
+        }
+
+        // LG webOS suele anunciarse por SSDP/UPnP. Esperamos a que terminen
+        // tanto DNS-SD como SSDP para no devolver una lista antes de tiempo.
+        Thread({
+            try {
+                discoverLgSsdp()
+            } finally {
+                ssdpFinished.set(true)
+                handler.post { finishIfReady() }
+            }
+        }, "AUREON-TV-SSDP").start()
 
         serviceTypes.forEach { serviceType ->
             val listener = object : NsdManager.DiscoveryListener {
@@ -192,7 +207,12 @@ class ControlHubTVPlugin : Plugin() {
             }
         }
 
-        handler.postDelayed({ finish() }, 7200L)
+        handler.postDelayed({
+            nsdWindowFinished.set(true)
+            finishIfReady()
+        }, 8500L)
+        // Límite de seguridad: nunca dejar la búsqueda abierta indefinidamente.
+        handler.postDelayed({ finish() }, 16000L)
     }
 
     private data class SsdpMetadata(
@@ -208,8 +228,10 @@ class ControlHubTVPlugin : Plugin() {
      */
     private fun discoverLgSsdp() {
         val targets = listOf(
+            "ssdp:all",
             "urn:lge-com:service:webos-second-screen:1",
             "urn:schemas-upnp-org:device:MediaRenderer:1",
+            "urn:schemas-upnp-org:device:MediaRenderer:2",
             "urn:schemas-upnp-org:device:Basic:1"
         )
         val multicastAddress = try {
@@ -219,8 +241,26 @@ class ControlHubTVPlugin : Plugin() {
         }
 
         try {
-            MulticastSocket().use { socket ->
-                socket.soTimeout = 450
+            // En algunos Xiaomi el socket multicast usa una interfaz distinta a Wi-Fi
+            // si Android tiene más de una red activa. Lo vinculamos a la IPv4 WLAN.
+            val wifiAddress = wifiIpv4Address()
+            val socket = try {
+                if (wifiAddress != null) {
+                    MulticastSocket(null).apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress(wifiAddress, 0))
+                        val wifiInterface = NetworkInterface.getByInetAddress(wifiAddress)
+                        if (wifiInterface != null) networkInterface = wifiInterface
+                    }
+                } else {
+                    MulticastSocket()
+                }
+            } catch (_: Exception) {
+                MulticastSocket()
+            }
+
+            socket.use {
+                socket.soTimeout = 300
                 socket.broadcast = true
                 targets.forEach { target ->
                     val request = (
@@ -235,7 +275,8 @@ class ControlHubTVPlugin : Plugin() {
                     } catch (_: Exception) {}
                 }
 
-                val deadline = System.currentTimeMillis() + 3600L
+                val deadline = System.currentTimeMillis() + 4500L
+                val checkedLocations = mutableSetOf<String>()
                 val buffer = ByteArray(8192)
                 while (System.currentTimeMillis() < deadline) {
                     val packet = DatagramPacket(buffer, buffer.size)
@@ -251,14 +292,17 @@ class ControlHubTVPlugin : Plugin() {
                         String(packet.data, packet.offset, packet.length, Charsets.ISO_8859_1)
                     )
                     val location = headers["location"] ?: continue
+                    if (!checkedLocations.add(location) || checkedLocations.size > 5) continue
                     val url = try { URL(location) } catch (_: Exception) { continue }
                     if (url.protocol != "http" || !isLocalAddress(url.host)) continue
 
-                    val metadata = readLgSsdpDescription(url) ?: continue
                     val responseTarget = headers["st"].orEmpty().lowercase()
+                    val uniqueService = headers["usn"].orEmpty().lowercase()
+                    val metadata = readLgSsdpDescription(url) ?: continue
                     val brand = metadata.manufacturer.lowercase()
                     if (!brand.contains("lg") && !responseTarget.contains("lge") &&
-                        !responseTarget.contains("webos")
+                        !responseTarget.contains("webos") && !uniqueService.contains("lge") &&
+                        !uniqueService.contains("webos")
                     ) continue
 
                     val address = url.host
@@ -301,8 +345,8 @@ class ControlHubTVPlugin : Plugin() {
 
         return try {
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 1400
-            connection.readTimeout = 1400
+            connection.connectTimeout = 1100
+            connection.readTimeout = 1100
             connection.requestMethod = "GET"
             connection.connect()
             if (connection.responseCode !in 200..299) return null
@@ -433,13 +477,8 @@ class ControlHubTVPlugin : Plugin() {
                                             "CONTROL_AUDIO",
                                             "CONTROL_INPUT_JOYSTICK",
                                             "CONTROL_INPUT_MEDIA_PLAYBACK",
-                                            "CONTROL_INPUT_TEXT",
                                             "CONTROL_MOUSE_AND_KEYBOARD",
-                                            "CONTROL_POWER",
-                                            "READ_CURRENT_CHANNEL",
-                                            "READ_RUNNING_APPS",
-                                            "WRITE_NOTIFICATION_TOAST",
-                                            "READ_NOTIFICATIONS"
+                                            "CONTROL_POWER"
                                         )
                                     )
                                 )
@@ -806,6 +845,25 @@ class ControlHubTVPlugin : Plugin() {
         baseClient.dispatcher.executorService.shutdown()
         baseClient.connectionPool.evictAll()
         super.handleOnDestroy()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wifiIpv4Address(): Inet4Address? {
+        return try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return null
+            val ip = wifi.connectionInfo?.ipAddress ?: 0
+            if (ip == 0) return null
+            val bytes = byteArrayOf(
+                (ip and 0xff).toByte(),
+                ((ip shr 8) and 0xff).toByte(),
+                ((ip shr 16) and 0xff).toByte(),
+                ((ip shr 24) and 0xff).toByte()
+            )
+            InetAddress.getByAddress(bytes) as? Inet4Address
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun lgClientKeyName(host: String) = "lg_client_key_$host"
