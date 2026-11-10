@@ -107,16 +107,34 @@ jobs:
           }
           JAVA
           find android/app/src/main/java -name 'MainActivity.kt' -delete
-      - name: Add local network permissions
+      - name: Configure Android local-network access for TV discovery
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
+
           p = Path("android/app/src/main/AndroidManifest.xml")
           s = p.read_text()
-          marker = '<application'
-          permissions = '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />' + chr(10)
-          if "android.permission.ACCESS_NETWORK_STATE" not in s:
-              s = s.replace(marker, permissions + marker, 1)
+          permissions = [
+              "android.permission.INTERNET",
+              "android.permission.ACCESS_NETWORK_STATE",
+              "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+          ]
+          for permission in permissions:
+              tag = f'<uses-permission android:name="{permission}" />'
+              if permission not in s:
+                  s = s.replace("<application", tag + chr(10) + "    <application", 1)
+
+          # Some LG webOS and Samsung legacy LAN APIs still require ws://.
+          # The native plugin restricts pairing to addresses discovered on the
+          # user's private LAN; secure LG webOS WSS/3001 is attempted first.
+          if "android:usesCleartextTraffic=" not in s:
+              s = re.sub(
+                  r"<application(\\s|>)",
+                  r'<application android:usesCleartextTraffic="true"\\1',
+                  s,
+                  count=1,
+              )
           p.write_text(s)
           PY
       - name: Build debug APK
