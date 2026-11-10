@@ -222,7 +222,7 @@ class ControlHubTVPlugin : Plugin() {
                         "MAN: \"ssdp:discover\"\r\n" +
                         "MX: 2\r\n" +
                         "ST: $target\r\n\r\n"
-                    )                    ).toByteArray(Charsets.US_ASCII)
+                    ).toByteArray(Charsets.US_ASCII)
                     try {
                         socket.send(DatagramPacket(request, request.size, multicastAddress, 1900))
                     } catch (_: Exception) {}
