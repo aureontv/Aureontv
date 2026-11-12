@@ -71,3 +71,30 @@
 .discovery-note{display:none}
 .tv-remote{margin-top:18px}
 @media(max-width:650px){.main{padding:18px 14px 32px}.discovery-card{padding:18px}.topbar h1{font-size:24px}}
+
+/* AUREON IR remote */
+.ir-remote{margin:18px 0;padding:22px;background:linear-gradient(145deg,#182d3e,#101c2d);border:1px solid #3b6870;border-radius:18px}
+.ir-remote[hidden]{display:none}
+.ir-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
+.ir-heading h2{font:800 20px Manrope;margin:5px 0}
+.ir-heading p,.ir-device-note{font-size:12px;color:var(--muted);line-height:1.55}
+.ir-live{padding:7px 11px;border-radius:20px;background:#183b34;color:#9ff0d7;font-size:11px;font-weight:800}
+.ir-brand-label{max-width:260px;margin:15px 0}
+.ir-pad{max-width:360px;margin:15px auto;padding:18px;background:#0b1421;border:1px solid #30445a;border-radius:25px}
+.ir-pad button{border:1px solid #344a60;background:#1c3045;color:#eaf3ff;border-radius:13px;min-width:44px;min-height:44px;font:600 14px 'DM Sans';cursor:pointer}
+.ir-pad button:hover{border-color:var(--accent);color:var(--accent)}
+.ir-pad button:disabled{opacity:.45;cursor:wait}
+.ir-pad button small{display:block;font-size:9px;color:var(--muted);font-weight:500}
+.ir-power-row,.ir-volume,.ir-extra{display:flex;align-items:center;justify-content:space-around;gap:10px}
+.ir-power-row{margin-bottom:17px}
+.ir-power{color:#ff9e9e!important}
+.ir-dpad{display:grid;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(3,52px);justify-content:center;gap:5px;margin:12px auto 18px}
+.ir-up{grid-column:2;grid-row:1}.ir-left{grid-column:1;grid-row:2}.ir-select{grid-column:2;grid-row:2;border-radius:50%!important;background:#31564f!important;color:#9ff0d7!important}.ir-right{grid-column:3;grid-row:2}.ir-down{grid-column:2;grid-row:3}
+.ir-volume{margin-top:12px;padding-top:12px;border-top:1px solid #293d52}
+.ir-volume span{font-size:9px;letter-spacing:1px;color:var(--muted)}
+.ir-extra{margin-top:14px}
+.ir-extra button{font-size:11px;padding:0 12px}
+#ir-status{font-size:12px;line-height:1.6;color:var(--muted)}
+#ir-status[data-state="success"]{color:#9ff0d7}
+#ir-status[data-state="warning"]{color:#e8c98a}
+@media(max-width:650px){.ir-remote{padding:17px}.ir-heading h2{font-size:18px}}
