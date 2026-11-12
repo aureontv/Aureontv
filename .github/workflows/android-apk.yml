@@ -94,17 +94,21 @@ jobs:
         run: |
           mkdir -p android/app/src/main/java/com/controlhub/tv android/app/src/main/java/com/aureontv/controlhub
           cp native/android/ControlHubTVPlugin.kt android/app/src/main/java/com/controlhub/tv/ControlHubTVPlugin.kt
+          mkdir -p android/app/src/main/java/com/controlhub/ir
+          cp native/android/AureonIRPlugin.kt android/app/src/main/java/com/controlhub/ir/AureonIRPlugin.kt
           cat > android/app/src/main/java/com/aureontv/controlhub/MainActivity.java <<'JAVA'
           package com.aureontv.controlhub;
 
           import android.os.Bundle;
           import com.getcapacitor.BridgeActivity;
           import com.controlhub.tv.ControlHubTVPlugin;
+          import com.controlhub.ir.AureonIRPlugin;
 
           public class MainActivity extends BridgeActivity {
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   registerPlugin(ControlHubTVPlugin.class);
+                  registerPlugin(AureonIRPlugin.class);
                   super.onCreate(savedInstanceState);
               }
           }
@@ -122,6 +126,7 @@ jobs:
               "android.permission.ACCESS_NETWORK_STATE",
               "android.permission.ACCESS_WIFI_STATE",
               "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+              "android.permission.TRANSMIT_IR",
           ]
           for permission in permissions:
               tag = f'<uses-permission android:name="{permission}" />'
