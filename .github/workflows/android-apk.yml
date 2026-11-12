@@ -9,6 +9,7 @@ on:
       - "service-worker.js"
       - "icons/**"
       - "app.js"
+      - "ir-remote.js"
       - "native-entry.js"
       - "styles.css"
       - "native/**"
