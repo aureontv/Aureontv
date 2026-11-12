@@ -115,6 +115,48 @@ jobs:
           }
           JAVA
           find android/app/src/main/java -name 'MainActivity.kt' -delete
+          cat > android/app/src/main/java/com/aureontv/controlhub/MainActivity.java <<'JAVA'
+          package com.aureontv.controlhub;
+
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.util.Log;
+          import com.getcapacitor.BridgeActivity;
+          import com.controlhub.tv.ControlHubTVPlugin;
+          import com.controlhub.ir.AureonIRPlugin;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(ControlHubTVPlugin.class);
+                  registerPlugin(AureonIRPlugin.class);
+                  super.onCreate(savedInstanceState);
+                  handleInfraredIntent(getIntent());
+              }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  setIntent(intent);
+                  handleInfraredIntent(intent);
+              }
+
+              private void handleInfraredIntent(Intent intent) {
+                  if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
+                  Uri uri = intent.getData();
+                  if (uri == null || !"aureontv".equals(uri.getScheme()) || !"ir".equals(uri.getHost())) return;
+                  String command = uri.getQueryParameter("command");
+                  if (command == null) return;
+                  try {
+                      boolean sent = AureonIRPlugin.transmitFromIntent(getApplicationContext(), command);
+                      Log.i("AUREON_TV_IR", sent ? "IR command transmitted: " + command : "IR command rejected: " + command);
+                  } catch (Exception error) {
+                      Log.e("AUREON_TV_IR", "IR transmission failed", error);
+                  }
+              }
+          }
+          JAVA
       - name: Configure Android local-network access for TV discovery
         run: |
           python3 - <<'PY'
@@ -146,6 +188,18 @@ jobs:
                   '<application android:usesCleartextTraffic="true"',
                   1,
               )
+          # Register the explicit deep link used by the hosted PWA to hand off
+          # a user-tapped IR command to the installed Android companion.
+          if 'android:scheme="aureontv"' not in s:
+              intent_filter = """
+                  <intent-filter>
+                      <action android:name="android.intent.action.VIEW" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                      <category android:name="android.intent.category.BROWSABLE" />
+                      <data android:scheme="aureontv" android:host="ir" />
+                  </intent-filter>
+              """
+              s = s.replace("</activity>", intent_filter + chr(10) + "        </activity>", 1)
           p.write_text(s)
           PY
       - name: Build debug APK

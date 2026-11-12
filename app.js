@@ -80,6 +80,28 @@ async function pairTv(device,button){
  }catch(error){discoveryStatus.textContent=error?.message||"No se pudo vincular el televisor.";button.disabled=false;button.textContent="Volver a intentar";}
 }
 async function sendTvCommand(command){
+ // On Android, prefer the phone's built-in IR emitter for the LG profile.
+ // This path does not require pairing a TV through Wi-Fi or Home Assistant.
+ if(window.__AUREON_NATIVE__ && window.AureonIR && typeof window.AureonIR.transmit==="function"){
+  const irCommands=["power","mute","volume_up","volume_down","channel_up","channel_down","up","down","left","right","select","home","menu","input"];
+  if(!irCommands.includes(command)){
+   $("#remote-status").textContent="Este botón todavía no tiene un código infrarrojo LG configurado.";
+   return;
+  }
+  document.querySelectorAll("[data-tv-command]").forEach(b=>b.disabled=true);
+  $("#remote-status").textContent="Comprobando el emisor infrarrojo…";
+  try{
+   const status=await window.AureonIR.getStatus();
+   if(!status?.available) throw new Error("No se detectó el emisor infrarrojo del teléfono.");
+   $("#remote-status").textContent="Transmitiendo señal infrarroja LG…";
+   const result=await window.AureonIR.transmit({manufacturer:"LG",command});
+   $("#remote-status").textContent=result?.accepted
+    ?"Android transmitió la señal infrarroja. Comprueba si el televisor respondió."
+    :"Android no confirmó la transmisión infrarroja.";
+  }catch(error){$("#remote-status").textContent=error?.message||"No se pudo transmitir por infrarrojos.";}
+  finally{document.querySelectorAll("[data-tv-command]").forEach(b=>b.disabled=false);}
+  return;
+ }
  // If the selected TV comes from Home Assistant, route the command through its
  // authenticated WebSocket session instead of the native LAN plugin.
  if(pairedTv?.source==="home_assistant"){
