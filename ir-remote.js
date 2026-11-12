@@ -45,7 +45,10 @@ export function initializeAureonIRRemote() {
   setStatus("Comprobando el emisor infrarrojo del teléfono…");
   window.AureonIR.getStatus().then(result => {
     if (!result?.available) {
-      setStatus("Android no detectó un emisor infrarrojo disponible.", "warning");
+      const service = result?.serviceAvailable ? "servicio Android disponible" : "servicio Android no disponible";
+      const emitter = result?.emitterAvailable ? "emisor detectado" : "emisor no confirmado";
+      const feature = result?.systemFeatureReported ? "característica IR declarada" : "característica IR no declarada por el fabricante";
+      setStatus(`No se pudo confirmar el emisor IR: ${service}; ${emitter}; ${feature}. La app no enviará señales hasta detectar el hardware.`, "warning");
       return;
     }
     const ranges = Array.isArray(result.frequencyRanges) ? result.frequencyRanges : [];
