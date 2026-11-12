@@ -114,20 +114,39 @@ class AureonIRPlugin : Plugin() {
 
     companion object {
         private val lgCommands = mapOf(
-            "power" to 0x08,
-            "mute" to 0x09,
-            "volume_up" to 0x02,
-            "volume_down" to 0x03,
-            "channel_up" to 0x00,
-            "channel_down" to 0x01,
-            "up" to 0x40,
-            "down" to 0x41,
-            "left" to 0x07,
-            "right" to 0x06,
-            "select" to 0x44,
-            "home" to 0x7C,
-            "menu" to 0x43,
-            "input" to 0x0B
+            "power" to 0x08, "mute" to 0x09,
+            "volume_up" to 0x02, "volume_down" to 0x03,
+            "channel_up" to 0x00, "channel_down" to 0x01,
+            "up" to 0x40, "down" to 0x41, "left" to 0x07,
+            "right" to 0x06, "select" to 0x44, "home" to 0x7C,
+            "menu" to 0x43, "input" to 0x0B
         )
+
+        // Entry point for commands launched from the HTTPS PWA via Android App Link.
+        // The PWA cannot access ConsumerIrManager; Android receives the explicit
+        // user-initiated aureontv://ir?command=... intent and emits the IR signal.
+        @JvmStatic
+        fun transmitFromIntent(context: android.content.Context, command: String): Boolean {
+            val code = lgCommands[command] ?: return false
+            val manager = context.getSystemService(android.content.Context.CONSUMER_IR_SERVICE) as? ConsumerIrManager
+                ?: return false
+            if (!manager.hasIrEmitter()) return false
+            val supported = try {
+                manager.carrierFrequencies?.any { 38000 in it.minFrequency..it.maxFrequency } ?: true
+            } catch (_: Exception) { true }
+            if (!supported) return false
+            val bytes = intArrayOf(0x04, 0xFB, code, code xor 0xFF)
+            val pattern = ArrayList<Int>(70)
+            pattern.add(9000); pattern.add(4500)
+            bytes.forEach { value ->
+                for (bit in 0 until 8) {
+                    pattern.add(560)
+                    pattern.add(if (((value shr bit) and 1) == 1) 1690 else 560)
+                }
+            }
+            pattern.add(560)
+            manager.transmit(38000, pattern.toIntArray())
+            return true
+        }
     }
 }
