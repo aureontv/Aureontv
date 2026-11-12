@@ -109,7 +109,7 @@ class AureonIRPlugin : Plugin() {
             "left" to 0x07,
             "right" to 0x06,
             "select" to 0x44,
-            "home" to 0x43,
+            "home" to 0x7C,
             "menu" to 0x43,
             "input" to 0x0B
         )
