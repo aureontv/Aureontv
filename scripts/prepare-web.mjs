@@ -5,7 +5,7 @@ await rm("www", { recursive: true, force: true });
 await mkdir("www", { recursive: true });
 
 // Keep the installed Android wrapper aligned with the hosted AUREON TV interface.
-for (const file of ["index.html", "styles.css", "manifest.webmanifest", "service-worker.js"]) {
+for (const file of ["index.html", "styles.css", "manifest.webmanifest", "service-worker.js", "ir-remote.js"]) {
   await cp(file, "www/" + file);
 }
 await cp("icons", "www/icons", { recursive: true });
