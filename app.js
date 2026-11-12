@@ -289,5 +289,7 @@ window.AureonWebRemoteCommand = async command => {
  if (!haClient) throw new Error("Home Assistant no está conectado. Vuelve a conectarlo para enviar órdenes.");
  const supported = ["power","mute","volume_up","volume_down","play_pause","up","down","left","right","select","home","back","menu"];
  if (!supported.includes(command)) throw new Error("Esta orden aún no está disponible en el modo web para este televisor.");
- await sendHomeAssistantCommand(command);
+ const accepted = await sendHomeAssistantCommand(command);
+ if (!accepted) throw new Error($("#remote-status").textContent || "Home Assistant no aceptó la orden.");
+ return true;
 };
