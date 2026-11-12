@@ -17,13 +17,29 @@ class AureonIRPlugin : Plugin() {
     @PluginMethod
     fun getStatus(call: PluginCall) {
         val manager = irManager()
-        val available = context.packageManager.hasSystemFeature(PackageManager.FEATURE_CONSUMER_IR) &&
+        val featureReported = try {
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_CONSUMER_IR)
+        } catch (_: Exception) {
+            false
+        }
+        // Some Android vendor builds omit the optional package feature flag even
+        // when ConsumerIrManager can successfully drive the physical IR emitter.
+        // The hardware API is the authoritative runtime check; do not reject a
+        // Redmi/Xiaomi device solely because its feature flag is missing.
+        val emitterAvailable = try {
             manager?.hasIrEmitter() == true
+        } catch (_: Exception) {
+            false
+        }
+        val available = emitterAvailable
         val result = JSObject()
         result.put("available", available)
+        result.put("systemFeatureReported", featureReported)
+        result.put("serviceAvailable", manager != null)
+        result.put("emitterAvailable", emitterAvailable)
         result.put("frequencyHz", 38000)
         val ranges = JSArray()
-        if (available && manager != null) {
+        if (emitterAvailable && manager != null) {
             try {
                 manager.carrierFrequencies?.forEach { range ->
                     val item = JSObject()
