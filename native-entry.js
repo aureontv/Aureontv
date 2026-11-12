@@ -1,10 +1,12 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import { initializeAureonIRRemote } from "./ir-remote.js";
 
-// The native plugin is exposed only inside the installed Capacitor app.
+// Register native bridges before initializing features that use them.
 window.__AUREON_NATIVE__ = Capacitor.isNativePlatform();
 if (window.__AUREON_NATIVE__) {
   window.ControlHubTV = registerPlugin("ControlHubTV");
   window.AureonIR = registerPlugin("AureonIR");
+  initializeAureonIRRemote();
 }
 
 // Load the same application logic used by the hosted web version.
