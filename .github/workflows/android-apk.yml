@@ -129,6 +129,9 @@ jobs:
               "android.permission.CHANGE_WIFI_MULTICAST_STATE",
               "android.permission.TRANSMIT_IR",
           ]
+          feature = '<uses-feature android:name="android.hardware.consumerir" android:required="false" />'
+          if "android.hardware.consumerir" not in s:
+              s = s.replace("<application", feature + chr(10) + "    <application", 1)
           for permission in permissions:
               tag = f'<uses-permission android:name="{permission}" />'
               if permission not in s:
