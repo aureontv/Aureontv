@@ -190,7 +190,7 @@ jobs:
               )
           # Register the explicit deep link used by the hosted PWA to hand off
           # a user-tapped IR command to the installed Android companion.
-          if "aureontv" not in s:
+          if 'android:scheme="aureontv"' not in s:
               intent_filter = """
                   <intent-filter>
                       <action android:name="android.intent.action.VIEW" />
