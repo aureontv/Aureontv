@@ -279,3 +279,15 @@ async function sendHomeAssistantCommand(command){
   $("#remote-status").textContent="Home Assistant aceptó la orden. El televisor puede tardar un momento en responder.";
  }catch(error){$("#remote-status").textContent=error?.message||"No se pudo enviar la orden."; }
 }
+
+// Public browser/PWA bridge for the shared remote panel. It routes commands only
+// through the user's active Home Assistant session; it never pretends to emit IR.
+window.AureonWebRemoteCommand = async command => {
+ if (!pairedTv || pairedTv.source !== "home_assistant") {
+  throw new Error("Selecciona primero un televisor de Home Assistant para controlarlo por Wi‑Fi.");
+ }
+ if (!haClient) throw new Error("Home Assistant no está conectado. Vuelve a conectarlo para enviar órdenes.");
+ const supported = ["power","mute","volume_up","volume_down","play_pause","up","down","left","right","select","home","back","menu"];
+ if (!supported.includes(command)) throw new Error("Esta orden aún no está disponible en el modo web para este televisor.");
+ await sendHomeAssistantCommand(command);
+};
