@@ -17,25 +17,19 @@ export function initializeAureonIRRemote() {
   if (!native) {
     setDisabled(false);
     setStatus(
-      "Modo web/PWA: el navegador no puede emitir infrarrojos. Conecta Home Assistant por HTTPS y selecciona tu televisor para enviar órdenes por Wi‑Fi. Para usar el infrarrojo del Redmi, abre la app Android.",
+      "Modo PWA: al pulsar un botón, AUREON TV abrirá el módulo Android del Redmi para transmitir la señal infrarroja. Necesitas tener instalada la versión Android actualizada.",
       "warning"
     );
-    buttons.forEach(button => button.addEventListener("click", async () => {
+    buttons.forEach(button => button.addEventListener("click", () => {
       const command = button.dataset.irCommand;
-      if (typeof window.AureonWebRemoteCommand !== "function") {
-        setStatus("Primero conecta Home Assistant y selecciona un televisor compatible en esta página.", "warning");
-        return;
-      }
-      setDisabled(true);
-      setStatus("Enviando orden por Wi‑Fi…");
-      try {
-        await window.AureonWebRemoteCommand(command);
-        setStatus("Solicitud enviada a Home Assistant. Comprueba la respuesta del televisor en el estado de conexión.", "success");
-      } catch (error) {
-        setStatus(error?.message || "No se pudo enviar la orden por Wi‑Fi.", "warning");
-      } finally {
-        setDisabled(false);
-      }
+      if (!command) return;
+      setStatus("Abriendo el emisor infrarrojo de AUREON TV en Android…");
+      // Android handles this explicit user gesture through its registered
+      // aureontv://ir deep link. Browsers cannot call the IR hardware directly.
+      window.location.href = "aureontv://ir?command=" + encodeURIComponent(command);
+      window.setTimeout(() => {
+        setStatus("Si no se abrió AUREON TV, instala/actualiza el APK con soporte de enlace infrarrojo.", "warning");
+      }, 1800);
     }));
     return;
   }
